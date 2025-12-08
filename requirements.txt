@@ -3,14 +3,14 @@ python-telegram-bot==22.2
 
 # Pyrogram (альтернативная библиотека для Telegram)
 pyrogram==2.0.106
-
+Flask==3.0.3
 # Async HTTP-запросы
 aiohttp==3.12.14
 httpx==0.28.1
 
 # Математика, графика и работа с графиками
 matplotlib==3.10.1
-numpy==3.10.1
+numpy==2.1.3
 
 # Системная информация
 psutil==7.0.0
@@ -18,11 +18,13 @@ pillow==11.1.0
 # Загрузка видео (например, с YouTube)
 yt-dlp==2025.3.26
 
-# Обработка естественного языка
-natasha==1.6.0
-
 # Firebase SDK
 firebase-admin==6.5.0
 
 # Google Generative AI
 google-generativeai==0.8.4
+google-genai==1.5.0
+
+setuptools==78.1.0
+requests
+
