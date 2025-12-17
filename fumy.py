@@ -9329,6 +9329,10 @@ def main():
     application.add_handler(CommandHandler("iq", iq_test))          
     application.add_handler(CommandHandler("chat", chat))           
     application.add_handler(CommandHandler("fsend", fumy_send))
+
+
+
+      # Обработчики сообщений
     application.add_handler(CommandHandler("anime", send_anime))
     application.add_handler(CommandHandler("animech", send_character))
     # Обработчики сообщений
@@ -9350,6 +9354,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
