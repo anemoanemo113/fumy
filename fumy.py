@@ -49,7 +49,7 @@ from PIL import Image
 from pyrogram import Client
 from telegram import (InlineKeyboardButton, InlineKeyboardMarkup,
                       InlineQueryResultArticle, InputTextMessageContent,
-                      ReplyKeyboardMarkup, Update, WebAppInfo, InputFile)
+                      ReplyKeyboardMarkup, Update, WebAppInfo, InputFile, InputMediaPhoto)
 from telegram.constants import ParseMode
 from telegram.ext import (Application, CallbackContext, CallbackQueryHandler,
                           CommandHandler, ContextTypes, InlineQueryHandler,
@@ -9354,6 +9354,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
