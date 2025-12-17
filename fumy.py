@@ -151,6 +151,199 @@ GITHUB_LINKS = [
     "https://raw.githubusercontent.com/V2RayRoot/V2RayConfig/refs/heads/main/Config/vless.txt",#random
 ]
 
+
+
+
+
+
+
+
+
+
+
+
+
+PHRASES = [
+    "Сегодня я иду смотреть",
+    "Вечерний просмотр: ",
+    "Как насчет глянуть это?",
+    "Моё самое любимое аниме на все времена:",
+    "Может быть, стоит пересмотреть:",
+    "Внимание, годный тайтл:",
+    "Всем пока, я ухожу смотреть:"
+]
+
+async def get_random_anime_data():
+    """
+    Делает запросы к Jikan API для получения случайного аниме и картинок к нему.
+    Возвращает кортеж: (название, url_обложки, список_доп_картинок)
+    """
+    async with httpx.AsyncClient() as client:
+        try:
+            # 1. Получаем случайное аниме
+            response = await client.get("https://api.jikan.moe/v4/random/anime")
+            if response.status_code != 200:
+                return None
+            
+            data = response.json().get("data", {})
+            mal_id = data.get("mal_id")
+            
+            # Выбираем название: Английское -> Если нет, то Японское -> Если нет, то Стандартное
+            title = data.get("title_english") or data.get("title_japanese") or data.get("title")
+            
+            # Получаем главную обложку (максимальное разрешение)
+            main_cover = data["images"]["jpg"]["large_image_url"]
+
+            # 2. Получаем дополнительные картинки по ID аниме
+            pics_response = await client.get(f"https://api.jikan.moe/v4/anime/{mal_id}/pictures")
+            extra_images = []
+            
+            if pics_response.status_code == 200:
+                pics_data = pics_response.json().get("data", [])
+                # Собираем URL картинок из ответа
+                all_pics = [img["jpg"]["large_image_url"] for img in pics_data]
+                
+                # Исключаем главную обложку, чтобы не было дублей (если она попадет в список)
+                all_pics = [url for url in all_pics if url != main_cover]
+                
+                # Берем до 4 случайных картинок, если они есть
+                # Если картинок меньше 4, берем сколько есть
+                count = min(len(all_pics), 4)
+                if count > 0:
+                    extra_images = random.sample(all_pics, count)
+
+            return title, main_cover, extra_images
+
+        except Exception as e:
+            logging.error(f"Ошибка при запросе к API: {e}")
+            return None
+
+async def send_anime(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Обработчик команды /anime
+    """
+    # Сообщаем пользователю, что бот "думает" (отправляет действие upload_photo)
+    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action='upload_photo')
+
+    anime_data = await get_random_anime_data()
+
+    if not anime_data:
+        await update.message.reply_text("Не удалось получить данные об аниме. Попробуйте снова.")
+        return
+
+    title, main_cover, extra_images = anime_data
+    
+    # Формируем случайную фразу
+    phrase = random.choice(PHRASES)
+    caption_text = f"{phrase} {title}"
+
+    # Формируем медиа-группу
+    # Первое фото - обложка с подписью
+    media_group = [InputMediaPhoto(media=main_cover, caption=caption_text)]
+    
+    # Добавляем остальные фото (до 4 штук)
+    for img_url in extra_images:
+        media_group.append(InputMediaPhoto(media=img_url))
+
+    # Отправка
+    # Если дополнительных картинок нет, отправляем просто фото, иначе медиагруппу
+    if len(media_group) == 1:
+        await update.message.reply_photo(photo=main_cover, caption=caption_text)
+    else:
+        await update.message.reply_media_group(media=media_group)
+
+
+
+
+PHRASES_CHAR = [
+    "Вот мой любимый персонаж:",
+    "Литерали я:",
+    "Будь я аниме я бы точно был:",
+    "Вот он, персонаж моей мечты:",
+    "Я выбираю быть прямо как:",
+    "Внимание, культовый герой:"
+]
+
+async def get_random_character_data():
+    """
+    Получает случайного персонажа + картинки к нему
+    Возвращает: (title, main_image, extra_images)
+    """
+    async with httpx.AsyncClient() as client:
+        try:
+            # 1. Случайный персонаж
+            resp = await client.get("https://api.jikan.moe/v4/random/characters")
+            if resp.status_code != 200:
+                return None
+
+            data = resp.json().get("data", {})
+            char_id = data.get("mal_id")
+
+            # Название: английское → японское → стандартное
+            name = data.get("name") or data.get("name_kanji") or "Неизвестный персонаж"
+
+            # Главное изображение
+            main_pic = data.get("images", {}).get("jpg", {}).get("image_url")
+
+            # 2. Получаем картинки
+            pics_resp = await client.get(f"https://api.jikan.moe/v4/characters/{char_id}/pictures")
+            extra_images = []
+
+            if pics_resp.status_code == 200:
+                pics_data = pics_resp.json().get("data", [])
+                all_pics = [img["jpg"]["image_url"] for img in pics_data]
+
+                all_pics = [url for url in all_pics if url != main_pic]
+
+                count = min(len(all_pics), 4)
+                if count > 0:
+                    extra_images = random.sample(all_pics, count)
+
+            return name, main_pic, extra_images
+
+        except Exception as e:
+            logging.error(f"Ошибка при запросе к API Character random: {e}")
+            return None
+
+
+
+async def send_character(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action='upload_photo')
+
+    character_data = await get_random_character_data()
+
+    if not character_data:
+        await update.message.reply_text("Не удалось получить данные о персонаже.")
+        return
+
+    name, main_pic, extra_images = character_data
+
+    phrase = random.choice(PHRASES_CHAR)
+    caption_text = f"{phrase} {name}"
+
+    media_group = [InputMediaPhoto(media=main_pic, caption=caption_text)]
+
+    for img_url in extra_images:
+        media_group.append(InputMediaPhoto(media=img_url))
+
+    if len(media_group) == 1:
+        await update.message.reply_photo(photo=main_pic, caption=caption_text)
+    else:
+        await update.message.reply_media_group(media=media_group)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 # Словарь для хранения индекса ссылки для каждого пользователя
 user_index = {}
 
@@ -9136,8 +9329,8 @@ def main():
     application.add_handler(CommandHandler("iq", iq_test))          
     application.add_handler(CommandHandler("chat", chat))           
     application.add_handler(CommandHandler("fsend", fumy_send))
-
-
+    application.add_handler(CommandHandler("anime", send_anime))
+    application.add_handler(CommandHandler("animech", send_character))
     # Обработчики сообщений
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     application.add_handler(MessageHandler(filters.PHOTO, handle_image))
@@ -9157,6 +9350,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
