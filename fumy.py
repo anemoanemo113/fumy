@@ -2165,6 +2165,10 @@ async def button_callback_handler(update: Update, context: ContextTypes.DEFAULT_
         return await download_file(update, context)
     elif action_data == "vpninstruction_show":
         return await send_instruction(update, context)
+    elif action_data.startswith("delgojo_"):
+        return await delete_media_callback(update, context)  # <-- добавлено
+
+  
     try:
         action, result_id = action_data.split("|", 1)
     except ValueError:
@@ -9686,6 +9690,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
