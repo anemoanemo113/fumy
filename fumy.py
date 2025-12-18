@@ -227,162 +227,106 @@ async def fetch_json(session, url, params, retries=3):
 # --- ОСНОВНАЯ ФУНКЦИЯ ---
 async def send_gojo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
-
-    # --- разбор тегов пользователя ---
     args = context.args
     user_tags_provided = bool(args)
 
+    # --- Подготовка тегов ---
     if args:
         raw_user_tags = " ".join(args)
-        tag_list = [
-            tag.strip().replace(" ", "_")
-            for tag in raw_user_tags.split(",")
-            if tag.strip()
-        ]
+        tag_list = [t.strip().replace(" ", "_") for t in raw_user_tags.split(",") if t.strip()]
         tags = " ".join(tag_list)
     else:
         tag_list = []
         tags = DEFAULT_TAG
-
     tags = f"{tags} sort:random"
 
     params = {
-        "limit": 20,
-        "json": 1,
-        "tags": tags,
-        "api_key": API_KEY_GELBOORU,
-        "user_id": USER_ID_GELBOORU,
+        "limit": 20, "json": 1, "tags": tags,
+        "api_key": API_KEY_GELBOORU, "user_id": USER_ID_GELBOORU,
     }
 
-    status_msg = None
+    status_msg = await context.bot.send_message(chat_id, "Ищу лучшие арты...")
 
     try:
-        status_msg = await context.bot.send_message(
-            chat_id,
-            "Ищу лучшие арты..."
-        )
-
-        timeout = aiohttp.ClientTimeout(total=12)
-        async with aiohttp.ClientSession(timeout=timeout) as session:
+        timeout_settings = aiohttp.ClientTimeout(total=15)
+        async with aiohttp.ClientSession(timeout=timeout_settings) as session:
             data = await fetch_json(session, BASE_API_URL, params)
             posts = data.get("post", [])
 
             if not posts:
-                await context.bot.edit_message_text(
-                    chat_id=chat_id,
-                    message_id=status_msg.message_id,
-                    text="Ничего не найдено по этим тэгам."
-                )
+                await status_msg.edit_text("Ничего не найдено по этим тэгам.")
                 return
 
-            # --- выбор подписи ---
+            # --- ПАРАЛЛЕЛЬНАЯ ПРОВЕРКА ИЗОБРАЖЕНИЙ ---
+            # Собираем потенциальные кандидаты
+            candidates = []
+            for post in posts:
+                img_url = post.get("file_url")
+                if img_url and img_url.lower().endswith((".jpg", ".jpeg", ".png")):
+                    file_size = post.get("file_size", 0)
+                    if file_size < 10 * 1024 * 1024:
+                        candidates.append(img_url)
+                if len(candidates) >= 10: # Берем с запасом для проверки
+                    break
+
+            # Запускаем проверки одновременно
+            tasks = [is_telegram_loadable(session, url) for url in candidates]
+            results = await asyncio.gather(*tasks)
+
+            # Формируем итоговую медиагруппу из тех, что прошли проверку
+            valid_urls = [url for url, is_ok in zip(candidates, results) if is_ok][:5]
+
+            if not valid_urls:
+                await status_msg.edit_text("Не удалось найти доступные изображения 😢")
+                return
+
+            # Подпись
             if user_tags_provided:
-                caption_template = random.choice(CAPTIONS_WITH_TAGS)
-                caption = caption_template.format(
-                    tags=", ".join(tag_list)
-                )
+                caption = random.choice(CAPTIONS_WITH_TAGS).format(tags=", ".join(tag_list))
             else:
                 caption = random.choice(CAPTIONS_DEFAULT)
 
-            media_group = []
+            media_group = [
+                InputMediaPhoto(media=valid_urls[0], caption=caption)
+            ] + [InputMediaPhoto(media=url) for url in valid_urls[1:]]
 
-            for post in posts:
-                if len(media_group) >= 5:
-                    break
+            # --- ОТПРАВКА С УВЕЛИЧЕННЫМ ТАЙМАУТОМ ---
+            # Мы удаляем статусное сообщение ДО отправки тяжелой группы, 
+            # чтобы пользователь видел прогресс
+            await status_msg.delete()
+            status_msg = None 
 
-                img_url = post.get("file_url")
-                if not img_url:
-                    continue
-
-                # --- фильтры ---
-                if not img_url.lower().endswith((".jpg", ".jpeg", ".png")):
-                    continue
-
-                file_size = post.get("file_size", 0)
-                if file_size and file_size > 10 * 1024 * 1024:
-                    continue
-
-                if not await is_telegram_loadable(session, img_url):
-                    continue
-
-                # --- добавление в медиагруппу ---
-                if not media_group:
-                    media_group.append(
-                        InputMediaPhoto(
-                            media=img_url,
-                            caption=caption
-                        )
-                    )
-                else:
-                    media_group.append(
-                        InputMediaPhoto(media=img_url)
-                    )
-
-            if not media_group:
-                await context.bot.edit_message_text(
-                    chat_id,
-                    status_msg.message_id,
-                    "Не удалось найти рабочие изображения 😢"
-                )
-                return
-
+            # Устанавливать read_timeout и write_timeout для конкретного вызова
             msgs = await context.bot.send_media_group(
                 chat_id=chat_id,
-                media=media_group
+                media=media_group,
+                read_timeout=60,  # Даем Telegram минуту на скачивание фото
+                write_timeout=60
             )
 
-            await context.bot.delete_message(
-                chat_id,
-                status_msg.message_id
-            )
-
-            # --- кнопка удаления всей группы ---
+            # Кнопка удаления
             first_msg_id = msgs[0].message_id
-            count = len(msgs)
-
-            callback_data = f"delgojo_{first_msg_id}_{count}"
-
-            keyboard = [[
-                InlineKeyboardButton(
-                    "🗑 Не нравится (Удалить)",
-                    callback_data=callback_data
-                )
-            ]]
+            callback_data = f"delgojo_{first_msg_id}_{len(msgs)}"
+            keyboard = [[InlineKeyboardButton("🗑 Удалить подборку", callback_data=callback_data)]]
 
             await context.bot.send_message(
                 chat_id=chat_id,
-                text="Что это!? 👆",
+                text="Готово! Как тебе?",
                 reply_to_message_id=first_msg_id,
                 reply_markup=InlineKeyboardMarkup(keyboard)
             )
 
     except Exception as e:
-        logging.exception("send_gojo error")
-
+        logging.exception("Ошибка в send_gojo")
+        # Если статусное сообщение еще живо — правим его
         if status_msg:
-            # БЫЛО:
-            # await context.bot.edit_message_text(chat_id, status_msg.message_id, f"Произошла ошибка: {e}")
-            
-            # СТАЛО:
             try:
-                await context.bot.edit_message_text(
-                    chat_id=chat_id,
-                    message_id=status_msg.message_id,
-                    text=f"Произошла ошибка: {e}"
-                )
-            except Exception:
-                # Если сообщение уже удалено или не может быть изменено,
-                # пробуем просто отправить новое
-                await context.bot.send_message(
-                    chat_id=chat_id,
-                    text=f"Произошла ошибка: {e}"
-                )
+                await status_msg.edit_text(f"Произошла ошибка: {e}")
+            except:
+                pass
         else:
-            await context.bot.send_message(
-                chat_id=chat_id,
-                text=f"Произошла ошибка: {e}"
-            )
-
+            # Если статус уже удален, но случилась беда
+            await context.bot.send_message(chat_id, "Извини, возникла ошибка при загрузке.")
 
 
 async def delete_media_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -9702,6 +9646,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
