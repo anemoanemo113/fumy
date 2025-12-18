@@ -261,20 +261,29 @@ async def send_gojo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # Собираем потенциальные кандидаты
             candidates = []
             for post in posts:
-                img_url = post.get("file_url")
+                # 1. Пытаемся взять sample_url (сжатая версия), если нет — берем оригинал
+                # Gelbooru обычно создает sample_url для тяжелых картинок
+                img_url = post.get("sample_url") or post.get("file_url")
+                
                 if img_url and img_url.lower().endswith((".jpg", ".jpeg", ".png")):
-                    file_size = post.get("file_size", 0)
-                    if file_size < 10 * 1024 * 1024:
-                        candidates.append(img_url)
-                if len(candidates) >= 10: # Берем с запасом для проверки
+                    # Проверяем размер (для sample_url он обычно невелик, но на всякий случай оставляем)
+                    # Обратите внимание: post.get("file_size") относится к оригиналу.
+                    # Для сжатой версии точный размер через API не всегда доступен,
+                    # поэтому мы полагаемся на функцию is_telegram_loadable
+                    candidates.append(img_url)
+                
+                if len(candidates) >= 10: 
                     break
 
-            # Запускаем проверки одновременно
+            # Запускаем проверки одновременно (теперь проверяются именно sample_url)
             tasks = [is_telegram_loadable(session, url) for url in candidates]
             results = await asyncio.gather(*tasks)
 
-            # Формируем итоговую медиагруппу из тех, что прошли проверку
+            # Формируем итоговую медиагруппу
             valid_urls = [url for url, is_ok in zip(candidates, results) if is_ok][:5]
+
+            # Формируем итоговую медиагруппу из тех, что прошли проверку
+
 
             if not valid_urls:
                 await status_msg.edit_text("Не удалось найти доступные изображения 😢")
@@ -307,7 +316,7 @@ async def send_gojo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # Кнопка удаления
             first_msg_id = msgs[0].message_id
             callback_data = f"delgojo_{first_msg_id}_{len(msgs)}"
-            keyboard = [[InlineKeyboardButton("🗑 Удалить подборку", callback_data=callback_data)]]
+            keyboard = [[InlineKeyboardButton("🗑 Не позориться (Удалить)", callback_data=callback_data)]]
 
             await context.bot.send_message(
                 chat_id=chat_id,
@@ -326,7 +335,7 @@ async def send_gojo(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 pass
         else:
             # Если статус уже удален, но случилась беда
-            await context.bot.send_message(chat_id, "Извини, возникла ошибка при загрузке.")
+            print(f"Ошибка при удалении")
 
 
 async def delete_media_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -9646,6 +9655,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
