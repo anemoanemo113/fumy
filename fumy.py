@@ -230,19 +230,45 @@ async def send_gojo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     args = context.args
     user_tags_provided = bool(args)
 
-    # --- Подготовка тегов ---
+    include_tags = []
+    exclude_tags = []
+
     if args:
-        raw_user_tags = " ".join(args)
-        tag_list = [t.strip().replace(" ", "_") for t in raw_user_tags.split(",") if t.strip()]
-        tags = " ".join(tag_list)
+        raw_text = " ".join(args)
+
+        # --- 1. Ищем всё в круглых скобках (исключающие теги) ---
+        excluded_blocks = re.findall(r"\((.*?)\)", raw_text)
+
+        for block in excluded_blocks:
+            for tag in block.split(","):
+                tag = tag.strip().replace(" ", "_")
+                if tag:
+                    exclude_tags.append(f"-{tag}")
+
+        # --- 2. Удаляем скобки из основного текста ---
+        cleaned_text = re.sub(r"\(.*?\)", "", raw_text)
+
+        # --- 3. Основные теги ---
+        for tag in cleaned_text.split(","):
+            tag = tag.strip().replace(" ", "_")
+            if tag:
+                include_tags.append(tag)
+
+        tag_list = include_tags
     else:
         tag_list = []
-        tags = DEFAULT_TAG
+        include_tags = [DEFAULT_TAG]
+
+    # --- 4. Собираем итоговую строку тегов ---
+    tags = " ".join(include_tags + exclude_tags)
     tags = f"{tags} sort:random"
 
     params = {
-        "limit": 20, "json": 1, "tags": tags,
-        "api_key": API_KEY_GELBOORU, "user_id": USER_ID_GELBOORU,
+        "limit": 20,
+        "json": 1,
+        "tags": tags,
+        "api_key": API_KEY_GELBOORU,
+        "user_id": USER_ID_GELBOORU,
     }
 
     status_msg = await context.bot.send_message(chat_id, "Ищу лучшие арты...")
@@ -257,66 +283,56 @@ async def send_gojo(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await status_msg.edit_text("Ничего не найдено по этим тэгам.")
                 return
 
-            # --- ПАРАЛЛЕЛЬНАЯ ПРОВЕРКА ИЗОБРАЖЕНИЙ ---
-            # Собираем потенциальные кандидаты
             candidates = []
             for post in posts:
-                # 1. Пытаемся взять sample_url (сжатая версия), если нет — берем оригинал
-                # Gelbooru обычно создает sample_url для тяжелых картинок
                 img_url = post.get("sample_url") or post.get("file_url")
-                
                 if img_url and img_url.lower().endswith((".jpg", ".jpeg", ".png")):
-                    # Проверяем размер (для sample_url он обычно невелик, но на всякий случай оставляем)
-                    # Обратите внимание: post.get("file_size") относится к оригиналу.
-                    # Для сжатой версии точный размер через API не всегда доступен,
-                    # поэтому мы полагаемся на функцию is_telegram_loadable
                     candidates.append(img_url)
-                
-                if len(candidates) >= 10: 
+                if len(candidates) >= 10:
                     break
 
-            # Запускаем проверки одновременно (теперь проверяются именно sample_url)
             tasks = [is_telegram_loadable(session, url) for url in candidates]
             results = await asyncio.gather(*tasks)
 
-            # Формируем итоговую медиагруппу
-            valid_urls = [url for url, is_ok in zip(candidates, results) if is_ok][:5]
-
-            # Формируем итоговую медиагруппу из тех, что прошли проверку
-
+            valid_urls = [url for url, ok in zip(candidates, results) if ok][:5]
 
             if not valid_urls:
                 await status_msg.edit_text("Не удалось найти доступные изображения 😢")
                 return
 
-            # Подпись
+            # --- Подпись ---
             if user_tags_provided:
-                caption = random.choice(CAPTIONS_WITH_TAGS).format(tags=", ".join(tag_list))
+                caption = random.choice(CAPTIONS_WITH_TAGS).format(
+                    tags=", ".join(tag_list)
+                )
             else:
                 caption = random.choice(CAPTIONS_DEFAULT)
 
             media_group = [
                 InputMediaPhoto(media=valid_urls[0], caption=caption)
-            ] + [InputMediaPhoto(media=url) for url in valid_urls[1:]]
+            ] + [
+                InputMediaPhoto(media=url) for url in valid_urls[1:]
+            ]
 
-            # --- ОТПРАВКА С УВЕЛИЧЕННЫМ ТАЙМАУТОМ ---
-            # Мы удаляем статусное сообщение ДО отправки тяжелой группы, 
-            # чтобы пользователь видел прогресс
             await status_msg.delete()
-            status_msg = None 
+            status_msg = None
 
-            # Устанавливать read_timeout и write_timeout для конкретного вызова
             msgs = await context.bot.send_media_group(
                 chat_id=chat_id,
                 media=media_group,
-                read_timeout=60,  # Даем Telegram минуту на скачивание фото
+                read_timeout=60,
                 write_timeout=60
             )
 
-            # Кнопка удаления
             first_msg_id = msgs[0].message_id
             callback_data = f"delgojo_{first_msg_id}_{len(msgs)}"
-            keyboard = [[InlineKeyboardButton("🗑 Не позориться (Удалить)", callback_data=callback_data)]]
+
+            keyboard = [[
+                InlineKeyboardButton(
+                    "🗑 Не позориться (Удалить)",
+                    callback_data=callback_data
+                )
+            ]]
 
             await context.bot.send_message(
                 chat_id=chat_id,
@@ -327,15 +343,11 @@ async def send_gojo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     except Exception as e:
         logging.exception("Ошибка в send_gojo")
-        # Если статусное сообщение еще живо — правим его
         if status_msg:
             try:
                 await status_msg.edit_text(f"Произошла ошибка: {e}")
             except:
                 pass
-        else:
-            # Если статус уже удален, но случилась беда
-            print(f"Ошибка при удалении")
 
 
 async def delete_media_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -9655,6 +9667,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
