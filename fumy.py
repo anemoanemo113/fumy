@@ -9621,6 +9621,8 @@ def main():
     application.add_handler(CallbackQueryHandler(download_file, pattern="^download_file$"))
     application.add_handler(CallbackQueryHandler(send_instruction, pattern="^vpninstruction_show$"))
     application.add_handler(CallbackQueryHandler(button_callback_handler))   
+    application.add_handler(CallbackQueryHandler(delete_media_callback, pattern="^delgojo_"))
+  
     # Обработчики команд
     application.add_handler(CommandHandler("rand", rand))
     application.add_handler(CommandHandler('test', test))
@@ -9662,6 +9664,7 @@ def main():
 
 
       # Обработчики сообщений
+    application.add_handler(CommandHandler('gojo', send_gojo))
     application.add_handler(CommandHandler("anime", send_anime))
     application.add_handler(CommandHandler("animech", send_character))
     # Обработчики сообщений
@@ -9683,6 +9686,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
