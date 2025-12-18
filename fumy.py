@@ -269,9 +269,9 @@ async def send_gojo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             if not posts:
                 await context.bot.edit_message_text(
-                    chat_id,
-                    status_msg.message_id,
-                    "Ничего не найдено по этим тэгам."
+                    chat_id=chat_id,
+                    message_id=status_msg.message_id,
+                    text="Ничего не найдено по этим тэгам."
                 )
                 return
 
@@ -360,15 +360,27 @@ async def send_gojo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logging.exception("send_gojo error")
 
         if status_msg:
-            await context.bot.edit_message_text(
-                chat_id,
-                status_msg.message_id,
-                f"Произошла ошибка: {e}"
-            )
+            # БЫЛО:
+            # await context.bot.edit_message_text(chat_id, status_msg.message_id, f"Произошла ошибка: {e}")
+            
+            # СТАЛО:
+            try:
+                await context.bot.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=status_msg.message_id,
+                    text=f"Произошла ошибка: {e}"
+                )
+            except Exception:
+                # Если сообщение уже удалено или не может быть изменено,
+                # пробуем просто отправить новое
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text=f"Произошла ошибка: {e}"
+                )
         else:
             await context.bot.send_message(
-                chat_id,
-                f"Произошла ошибка: {e}"
+                chat_id=chat_id,
+                text=f"Произошла ошибка: {e}"
             )
 
 
@@ -9690,6 +9702,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
