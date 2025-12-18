@@ -163,6 +163,250 @@ GITHUB_LINKS = [
 
 
 
+
+
+# --- КОНФИГУРАЦИЯ ---
+API_KEY_GELBOORU = '1c2a1a54fdbc599258f5228e952cc72c6b4643759135274d873fc16ea18c1878'
+USER_ID_GELBOORU = '963700'
+
+# Ваши варианты подписей
+
+CAPTIONS_DEFAULT = [
+    "Вот подборка настоящего Годжомана.",
+    "Ну разве он не крут?",
+    "Всем пока, я ухожу смотреть на эти арты",
+    "Свежая доставка контента!"
+]
+
+CAPTIONS_WITH_TAGS = [
+    "Подборка по тэгам: {tags}",
+    "Мои любимые картинки по запросу: {tags}",
+    "Я просто обожаю такие картинки {tags}",
+    "Это именно те {tags} изображения что мне и нужны"
+]
+
+DEFAULT_TAG = "gojou_satoru"
+BASE_API_URL = "https://gelbooru.com/index.php?page=dapi&s=post&q=index"
+
+
+async def is_telegram_loadable(session, url, max_bytes=256_000):
+    """
+    Проверяет, что Telegram сможет скачать файл:
+    делаем GET и читаем первые ~256 КБ
+    """
+    try:
+        async with session.get(url, timeout=7) as resp:
+            if resp.status != 200:
+                return False
+
+            size = 0
+            async for chunk in resp.content.iter_chunked(8192):
+                size += len(chunk)
+                if size >= max_bytes:
+                    return True
+
+            return size > 0
+    except:
+        return False
+
+
+# --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
+async def fetch_json(session, url, params, retries=3):
+    for attempt in range(retries):
+        try:
+            async with session.get(url, params=params) as resp:
+                if resp.status != 200:
+                    raise Exception(f"HTTP {resp.status}")
+                return await resp.json()
+        except Exception as e:
+            if attempt == retries - 1:
+                raise
+            await asyncio.sleep(1)
+
+
+# --- ОСНОВНАЯ ФУНКЦИЯ ---
+async def send_gojo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+
+    # --- разбор тегов пользователя ---
+    args = context.args
+    user_tags_provided = bool(args)
+
+    if args:
+        raw_user_tags = " ".join(args)
+        tag_list = [
+            tag.strip().replace(" ", "_")
+            for tag in raw_user_tags.split(",")
+            if tag.strip()
+        ]
+        tags = " ".join(tag_list)
+    else:
+        tag_list = []
+        tags = DEFAULT_TAG
+
+    tags = f"{tags} sort:random"
+
+    params = {
+        "limit": 20,
+        "json": 1,
+        "tags": tags,
+        "api_key": API_KEY_GELBOORU,
+        "user_id": USER_ID_GELBOORU,
+    }
+
+    status_msg = None
+
+    try:
+        status_msg = await context.bot.send_message(
+            chat_id,
+            "Ищу лучшие арты..."
+        )
+
+        timeout = aiohttp.ClientTimeout(total=12)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            data = await fetch_json(session, BASE_API_URL, params)
+            posts = data.get("post", [])
+
+            if not posts:
+                await context.bot.edit_message_text(
+                    chat_id,
+                    status_msg.message_id,
+                    "Ничего не найдено по этим тэгам."
+                )
+                return
+
+            # --- выбор подписи ---
+            if user_tags_provided:
+                caption_template = random.choice(CAPTIONS_WITH_TAGS)
+                caption = caption_template.format(
+                    tags=", ".join(tag_list)
+                )
+            else:
+                caption = random.choice(CAPTIONS_DEFAULT)
+
+            media_group = []
+
+            for post in posts:
+                if len(media_group) >= 5:
+                    break
+
+                img_url = post.get("file_url")
+                if not img_url:
+                    continue
+
+                # --- фильтры ---
+                if not img_url.lower().endswith((".jpg", ".jpeg", ".png")):
+                    continue
+
+                file_size = post.get("file_size", 0)
+                if file_size and file_size > 10 * 1024 * 1024:
+                    continue
+
+                if not await is_telegram_loadable(session, img_url):
+                    continue
+
+                # --- добавление в медиагруппу ---
+                if not media_group:
+                    media_group.append(
+                        InputMediaPhoto(
+                            media=img_url,
+                            caption=caption
+                        )
+                    )
+                else:
+                    media_group.append(
+                        InputMediaPhoto(media=img_url)
+                    )
+
+            if not media_group:
+                await context.bot.edit_message_text(
+                    chat_id,
+                    status_msg.message_id,
+                    "Не удалось найти рабочие изображения 😢"
+                )
+                return
+
+            msgs = await context.bot.send_media_group(
+                chat_id=chat_id,
+                media=media_group
+            )
+
+            await context.bot.delete_message(
+                chat_id,
+                status_msg.message_id
+            )
+
+            # --- кнопка удаления всей группы ---
+            first_msg_id = msgs[0].message_id
+            count = len(msgs)
+
+            callback_data = f"delgojo_{first_msg_id}_{count}"
+
+            keyboard = [[
+                InlineKeyboardButton(
+                    "🗑 Не нравится (Удалить)",
+                    callback_data=callback_data
+                )
+            ]]
+
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text="Что это!? 👆",
+                reply_to_message_id=first_msg_id,
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+
+    except Exception as e:
+        logging.exception("send_gojo error")
+
+        if status_msg:
+            await context.bot.edit_message_text(
+                chat_id,
+                status_msg.message_id,
+                f"Произошла ошибка: {e}"
+            )
+        else:
+            await context.bot.send_message(
+                chat_id,
+                f"Произошла ошибка: {e}"
+            )
+
+
+
+async def delete_media_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+
+
+    await query.answer() # Чтобы у пользователя пропали "часики" загрузки на кнопке
+
+    data = query.data
+    
+    # Проверяем, что это наш коллбэк
+    if data.startswith("delgojo_"):
+        try:
+            # Разбираем строку "del_12345_5"
+            parts = data.split("_")
+            start_id = int(parts[1])
+            count = int(parts[2])
+            chat_id = query.message.chat_id
+
+            # Удаляем саму медиагруппу (циклом по ID)
+            # Мы предполагаем, что ID идут подряд: 12345, 12346, 12347...
+            for i in range(count):
+                try:
+                    await context.bot.delete_message(chat_id=chat_id, message_id=start_id + i)
+                except Exception:
+                    # Если сообщение уже удалено или не найдено - игнорируем
+                    pass
+
+            # Удаляем сообщение с кнопкой (само меню)
+            await query.message.delete()
+
+        except Exception as e:
+            print(f"Ошибка при удалении: {e}")
+
+
+
 PHRASES = [
     "Сегодня я иду смотреть",
     "Вечерний просмотр: ",
@@ -222,8 +466,9 @@ async def send_anime(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Обработчик команды /anime
     """
-    # Сообщаем пользователю, что бот "думает" (отправляет действие upload_photo)
-    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action='upload_photo')
+    chat_id = update.effective_chat.id
+    # Сообщаем пользователю, что бот "думает"
+    await context.bot.send_chat_action(chat_id=chat_id, action='upload_photo')
 
     anime_data = await get_random_anime_data()
 
@@ -238,21 +483,55 @@ async def send_anime(update: Update, context: ContextTypes.DEFAULT_TYPE):
     caption_text = f"{phrase} {title}"
 
     # Формируем медиа-группу
-    # Первое фото - обложка с подписью
     media_group = [InputMediaPhoto(media=main_cover, caption=caption_text)]
     
-    # Добавляем остальные фото (до 4 штук)
     for img_url in extra_images:
         media_group.append(InputMediaPhoto(media=img_url))
 
-    # Отправка
-    # Если дополнительных картинок нет, отправляем просто фото, иначе медиагруппу
+    # --- ОТПРАВКА И СОХРАНЕНИЕ ID СООБЩЕНИЙ ---
+    sent_msgs = []
+    
     if len(media_group) == 1:
-        await update.message.reply_photo(photo=main_cover, caption=caption_text)
+        # Если картинка одна, отправляем через reply_photo и кладем результат в список
+        msg = await update.message.reply_photo(photo=main_cover, caption=caption_text)
+        sent_msgs.append(msg)
     else:
-        await update.message.reply_media_group(media=media_group)
+        # Если группа, отправляем через reply_media_group
+        msgs = await update.message.reply_media_group(media=media_group)
+        sent_msgs.extend(msgs)
+
+    # --- ДОБАВЛЕНИЕ КНОПКИ УДАЛЕНИЯ ---
+    if sent_msgs:
+        first_msg_id = sent_msgs[0].message_id
+        count = len(sent_msgs)
+
+        # Используем тот же префикс 'delgojo_', чтобы работала ваша функция delete_media_callback
+        callback_data = f"delgojo_{first_msg_id}_{count}"
+
+        keyboard = [[
+            InlineKeyboardButton(
+                "🗑 Не нравится (Удалить)",
+                callback_data=callback_data
+            )
+        ]]
+
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text="Что это!? 👆",
+            reply_to_message_id=first_msg_id,
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
 
 
+def is_valid_character_image(url: str | None) -> bool:
+    if not url:
+        return False
+
+    # Заглушка MyAnimeList
+    if "apple-touch-icon" in url:
+        return False
+
+    return True
 
 
 PHRASES_CHAR = [
@@ -264,51 +543,73 @@ PHRASES_CHAR = [
     "Внимание, культовый герой:"
 ]
 
-async def get_random_character_data():
+async def get_random_character_data(max_attempts: int = 10):
     """
-    Получает случайного персонажа + картинки к нему
-    Возвращает: (title, main_image, extra_images)
+    Получает случайного персонажа с хотя бы одной нормальной картинкой
+    Возвращает: (name, main_image, extra_images)
     """
-    async with httpx.AsyncClient() as client:
-        try:
-            # 1. Случайный персонаж
-            resp = await client.get("https://api.jikan.moe/v4/random/characters")
-            if resp.status_code != 200:
-                return None
+    async with httpx.AsyncClient(timeout=15) as client:
+        for attempt in range(max_attempts):
+            try:
+                resp = await client.get("https://api.jikan.moe/v4/random/characters")
+                if resp.status_code != 200:
+                    continue
 
-            data = resp.json().get("data", {})
-            char_id = data.get("mal_id")
+                data = resp.json().get("data", {})
+                char_id = data.get("mal_id")
 
-            # Название: английское → японское → стандартное
-            name = data.get("name") or data.get("name_kanji") or "Неизвестный персонаж"
+                if not char_id:
+                    continue
 
-            # Главное изображение
-            main_pic = data.get("images", {}).get("jpg", {}).get("image_url")
+                name = (
+                    data.get("name")
+                    or data.get("name_kanji")
+                    or "Неизвестный персонаж"
+                )
 
-            # 2. Получаем картинки
-            pics_resp = await client.get(f"https://api.jikan.moe/v4/characters/{char_id}/pictures")
-            extra_images = []
+                main_pic = data.get("images", {}).get("jpg", {}).get("image_url")
+                logger.info(f"[ATTEMPT {attempt}] main_pic: {main_pic}")
 
-            if pics_resp.status_code == 200:
-                pics_data = pics_resp.json().get("data", [])
-                all_pics = [img["jpg"]["image_url"] for img in pics_data]
+                # ❌ если главная картинка — заглушка
+                if not is_valid_character_image(main_pic):
+                    logger.info("Пропуск персонажа: нет нормальной главной картинки")
+                    continue
 
-                all_pics = [url for url in all_pics if url != main_pic]
+                # Получаем дополнительные картинки
+                pics_resp = await client.get(
+                    f"https://api.jikan.moe/v4/characters/{char_id}/pictures"
+                )
 
-                count = min(len(all_pics), 4)
-                if count > 0:
-                    extra_images = random.sample(all_pics, count)
+                extra_images = []
 
-            return name, main_pic, extra_images
+                if pics_resp.status_code == 200:
+                    pics_data = pics_resp.json().get("data", [])
+                    all_pics = [
+                        img["jpg"]["image_url"]
+                        for img in pics_data
+                        if is_valid_character_image(img["jpg"]["image_url"])
+                        and img["jpg"]["image_url"] != main_pic
+                    ]
 
-        except Exception as e:
-            logging.error(f"Ошибка при запросе к API Character random: {e}")
-            return None
+                    if all_pics:
+                        count = min(len(all_pics), 4)
+                        extra_images = random.sample(all_pics, count)
+
+                # ✅ хотя бы одна нормальная картинка есть
+                return name, main_pic, extra_images
+
+            except Exception as e:
+                logger.error(f"Ошибка при запросе к API Character random: {e}")
+
+        # Если за max_attempts так и не нашли нормального персонажа
+        return None
 
 
 
+# --- ОБНОВЛЕННАЯ ФУНКЦИЯ send_character ---
 async def send_character(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action='upload_photo')
+    chat_id = update.effective_chat.id
+    await context.bot.send_chat_action(chat_id=chat_id, action='upload_photo')
 
     character_data = await get_random_character_data()
 
@@ -320,16 +621,44 @@ async def send_character(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     phrase = random.choice(PHRASES_CHAR)
     caption_text = f"{phrase} {name}"
-
+    
     media_group = [InputMediaPhoto(media=main_pic, caption=caption_text)]
 
     for img_url in extra_images:
         media_group.append(InputMediaPhoto(media=img_url))
 
+    # --- ОТПРАВКА И СОХРАНЕНИЕ ID СООБЩЕНИЙ ---
+    sent_msgs = []
+
     if len(media_group) == 1:
-        await update.message.reply_photo(photo=main_pic, caption=caption_text)
+        msg = await update.message.reply_photo(photo=main_pic, caption=caption_text)
+        sent_msgs.append(msg)
     else:
-        await update.message.reply_media_group(media=media_group)
+        msgs = await update.message.reply_media_group(media=media_group)
+        sent_msgs.extend(msgs)
+
+    # --- ДОБАВЛЕНИЕ КНОПКИ УДАЛЕНИЯ ---
+    if sent_msgs:
+        first_msg_id = sent_msgs[0].message_id
+        count = len(sent_msgs)
+
+        # Аналогично используем 'delgojo_' для совместимости
+        callback_data = f"delgojo_{first_msg_id}_{count}"
+
+        keyboard = [[
+            InlineKeyboardButton(
+                "🗑 Не нравится (Удалить)",
+                callback_data=callback_data
+            )
+        ]]
+
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text="Что это!? 👆",
+            reply_to_message_id=first_msg_id,
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+
 
 
 
@@ -9354,6 +9683,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
