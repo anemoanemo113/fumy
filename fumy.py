@@ -63,8 +63,8 @@ TELEGRAM_BOT_TOKEN = "7027286115:AAFTS-mK2ajoXB4wTuvS0NmiHi2R2TDBrIo"
 API_KEYS = os.getenv("API_KEYS", "").split(",")
 
 # 2. Укажите основную и запасные модели
-PRIMARY_MODEL = 'gemini-2.5-flash'
-FALLBACK_MODELS = ['gemini-2.5-flash-preview-05-20', 'gemini-2.5-flash-lite', 'gemini-2.0-flash', 'gemini-2.0-flash-exp']
+PRIMARY_MODEL = 'gemini-3-flash-preview'
+FALLBACK_MODELS = ['gemini-2.5-flash', 'gemini-2.5-flash-preview-05-20', 'gemini-2.5-flash-lite', 'gemini-2.0-flash', 'gemini-2.0-flash-exp']
 GEMMA_MODELS = ['gemma-3-27b-it', 'gemma-3-12b-it', 'gemma-3-4b-it', 'gemma-3n-10b-it']
 
 # Объединяем все модели в один список приоритетов
@@ -9667,6 +9667,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
