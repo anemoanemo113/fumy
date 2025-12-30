@@ -9919,7 +9919,10 @@ async def prediction_2026(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     chat_id = str(update.message.chat_id)
     user_message = " ".join(context.args)
-
+    # ПОЛУЧЕНИЕ ИМЕНИ
+    user = update.effective_user
+    # Используем html.escape, чтобы имя типа "<Dima>" не сломало разметку
+    name = html.escape(user.full_name) 
     # --- БЛОК РАНДОМА ---
     # Генерируем данные заранее, чтобы передать их и в промпт, и в сообщение пользователю
     
@@ -9968,7 +9971,7 @@ async def prediction_2026(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # Формируем красивый блок со статами для сообщения
         pre_prediction_header = (
-            f"<b>Характеристики 2026:</b>\n"
+            f"<b>Характеристики 2026 для {name}:</b>\n" # <-- ВСТАВИЛИ ИМЯ
             f"🍀 Удача: <code>{stats['luck']}/10</code>\n"
             f"🌠 Ментальное здоровье: <code>{stats['mental']}/10</code>\n"
             f"✨ Социализация: <code>{stats['social']}/10</code>\n"
@@ -10088,6 +10091,7 @@ async def prediction_2026(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Запускаем асинхронную задачу
     asyncio.create_task(background_prediction())
 
+
 # Обновляем основную функцию main
 def main():
     application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
@@ -10161,6 +10165,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
