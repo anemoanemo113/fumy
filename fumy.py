@@ -59,7 +59,10 @@ import random
 
 
 # Telegram Bot Token и Google API Key
-TELEGRAM_BOT_TOKEN = "7027286115:AAFTS-mK2ajoXB4wTuvS0NmiHi2R2TDBrIo"
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
+
+if not TELEGRAM_BOT_TOKEN:
+    raise RuntimeError("TELEGRAM_BOT_TOKEN не задан в переменных окружения")
 API_KEYS = os.getenv("API_KEYS", "").split(",")
 
 # 2. Укажите основную и запасные модели
@@ -10338,6 +10341,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
