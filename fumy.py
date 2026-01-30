@@ -1498,20 +1498,48 @@ async def send_reply_with_limit_v2(text, max_length=4096):
 
 async def chatid(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        ref = db.reference('roles')
-        data = ref.get()
+        # Список узлов базы данных, где могут храниться chat_id
+        nodes_to_check = [
+            'roles',
+            'chat_histories',
+            'games_histories',
+            'chat_histories_full'
+        ]
+        
+        all_chat_ids = set() # Используем множество (set), чтобы id не дублировались
 
-        if not data:
-            await update.message.reply_text("В базе нет chat_id.")
+        # Проходим по каждому узлу и собираем ключи
+        for node in nodes_to_check:
+            ref = db.reference(node)
+            # shallow=True скачивает только ключи, а не всё содержимое (очень важно для скорости)
+            data = ref.get(shallow=True) 
+            
+            if data:
+                # data будет словарем, где ключи — это chat_id
+                all_chat_ids.update(data.keys())
+
+        if not all_chat_ids:
+            await update.message.reply_text("В базе не найдено ни одного chat_id.")
             return
 
-        chat_ids = ",".join(str(cid) for cid in data.keys())
+        # Сортируем и превращаем в строку
+        sorted_ids = sorted(list(all_chat_ids))
+        result_text = ", ".join(str(cid) for cid in sorted_ids)
+        
+        message_count = len(sorted_ids)
+        header = f"Найдены chat_id во всех разделах ({message_count} шт.):\n\n"
+        full_text = header + result_text
 
-        await update.message.reply_text(chat_ids)
+        # Если список очень длинный, разбиваем его, чтобы Telegram не выдал ошибку (лимит 4096)
+        if len(full_text) > 4000:
+            for x in range(0, len(full_text), 4000):
+                await update.message.reply_text(full_text[x:x+4000])
+        else:
+            await update.message.reply_text(full_text)
 
     except exceptions.FirebaseError as e:
-        logger.error(f"Firebase ошибка при получении chat_id: {e}")
-        await update.message.reply_text("Ошибка Firebase при получении chat_id.")
+        logger.error(f"Firebase ошибка при получении полного списка chat_id: {e}")
+        await update.message.reply_text("Ошибка Firebase при сборке полного списка.")
         
     except Exception as e:
         logger.error(f"Неожиданная ошибка при получении chat_id: {e}")
@@ -10360,6 +10388,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
