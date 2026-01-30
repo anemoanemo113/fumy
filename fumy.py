@@ -1496,7 +1496,26 @@ async def send_reply_with_limit_v2(text, max_length=4096):
 
 
 
+async def chatid(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        ref = db.reference('roles')
+        data = ref.get()
 
+        if not data:
+            await update.message.reply_text("В базе нет chat_id.")
+            return
+
+        chat_ids = ",".join(str(cid) for cid in data.keys())
+
+        await update.message.reply_text(chat_ids)
+
+    except exceptions.FirebaseError as e:
+        logger.error(f"Firebase ошибка при получении chat_id: {e}")
+        await update.message.reply_text("Ошибка Firebase при получении chat_id.")
+        
+    except Exception as e:
+        logger.error(f"Неожиданная ошибка при получении chat_id: {e}")
+        await update.message.reply_text("Произошла ошибка.")
 
 
 
@@ -10315,7 +10334,7 @@ def main():
     application.add_handler(CommandHandler("iq", iq_test))          
     application.add_handler(CommandHandler("chat", chat))           
     application.add_handler(CommandHandler("fsend", fumy_send))
-
+    application.add_handler(CommandHandler("chatid", chatid))
 
 
       # Обработчики сообщений
@@ -10341,6 +10360,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
