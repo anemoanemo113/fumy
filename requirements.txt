@@ -27,4 +27,6 @@ google-genai==1.5.0
 
 setuptools==78.1.0
 requests
+youtube-transcript-api
+
 
