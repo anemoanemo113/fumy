@@ -3819,6 +3819,68 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 task.add_done_callback(lambda t: _remove_task_from_context(t, context.user_data))
 
                 return
+
+
+            elif original_message.document and original_message.document.file_name.endswith('.txt'):
+                waiting_message = await update.message.reply_text("Читаю текстовый файл...")
+
+                async def background_document_processing():
+                    original_doc = original_message.document
+                    file = await context.bot.get_file(original_doc.file_id)
+                    
+                    local_file_path = None
+                    try:
+                        fd, local_file_path = tempfile.mkstemp(suffix=".txt")
+                        os.close(fd)
+                        await file.download_to_drive(local_file_path)
+
+                        # Извлекаем промпт после слова "фуми"
+                        match = re.match(r"(?i)^фуми[,.!?;:\-]*\s*(.*)", user_message)
+                        prompt_text = match.group(1).strip() if match else user_message
+
+                        response_text = await generate_document_response(
+                            document_file_path=local_file_path,
+                            command_text=prompt_text,
+                            context="\n".join(f"{msg['role']}: {msg['message']}" for msg in relevant_messages)
+                        )
+
+                        message = {
+                            "role": "Бот",
+                            "message": response_text,
+                            "reply_to": real_name,
+                            "timestamp": message_time.strftime("%Y-%m-%d %H:%M:%S")
+                        }
+                        history_dict[chat_id].append(message)
+                        add_to_relevant_context(chat_id, message)
+
+                        if len(history_dict[chat_id]) > MAX_HISTORY_LENGTH:
+                            history_dict[chat_id] = history_dict[chat_id][-MAX_HISTORY_LENGTH:]
+                        save_history_func(chat_id, history_dict[chat_id])
+
+                        html_parts = clean_and_parse_html(response_text)
+                        for part in html_parts:
+                            sent_message = await update.message.reply_text(part, parse_mode='HTML')
+                        await waiting_message.delete()
+
+                    except Exception as e:
+                        logging.error(f"Ошибка при обработке txt документа: {e}")
+                        await waiting_message.edit_text("⚠️ Не удалось обработать текстовый файл.")
+                    finally:
+                        if local_file_path and os.path.exists(local_file_path):
+                            try:
+                                os.remove(local_file_path)
+                            except Exception as cleanup_error:
+                                logging.warning(f"Не удалось удалить временный файл: {cleanup_error}")
+                        history_dict.pop(chat_id, None)
+
+                task = asyncio.create_task(background_document_processing())
+                context.user_data.setdefault('user_tasks', set()).add(task)
+                task.add_done_callback(lambda t: _remove_task_from_context(t, context.user_data))
+
+                return
+
+
+          
             elif original_message.voice:
                 waiting_message = await update.message.reply_text("Слушаю голосовое...")
 
@@ -4505,6 +4567,77 @@ def format_chat_context(chat_history, current_request):
 
 
 
+
+
+
+async def generate_document_response(document_file_path: str, command_text: str, context="") -> str:
+    """
+    Читает локальный .txt файл и генерирует ответ с помощью Gemini/Gemma.
+    """
+    if not os.path.exists(document_file_path):
+        logger.error(f"Файл не найден: {document_file_path}")
+        return "Файл не найден."
+
+    # Читаем содержимое (с ограничением на 2 млн символов, чтобы не превысить токены)
+    try:
+        with open(document_file_path, 'r', encoding='utf-8') as f:
+            file_content = f.read(2000000)
+    except UnicodeDecodeError:
+        try:
+            with open(document_file_path, 'r', encoding='cp1251') as f:
+                file_content = f.read(2000000)
+        except Exception as e:
+            logger.error(f"Ошибка декодирования файла: {e}")
+            return "Не удалось прочитать файл. Убедитесь, что это корректный .txt файл."
+
+    keys_to_try = key_manager.get_keys_to_try()
+    
+    final_prompt = f"Содержимое текстового файла:\n\n{file_content}\n\nЗапрос пользователя: {command_text}"
+    if context:
+        final_prompt += f"\n\nКонтекст диалога:\n{context}"
+
+    for model_name in ALL_MODELS_PRIORITY:
+        is_gemma = model_name in GEMMA_MODELS
+        # Простая системная инструкция для текстового помощника
+        current_system_instruction = "Ты полезная нейросеть-помощник. Помоги пользователю в работе с прикрепленным текстовым файлом." if not is_gemma else None
+
+        for api_key in keys_to_try:
+            try:
+                logger.info(f"Попытка document: модель='{model_name}', ключ=...{api_key[-4:]}")
+                client = genai.Client(api_key=api_key)
+
+                response = await client.aio.models.generate_content(
+                    model=model_name,
+                    contents=final_prompt,
+                    config=types.GenerateContentConfig(
+                        system_instruction=current_system_instruction,
+                        temperature=1.0, 
+                        top_p=0.95,
+                        top_k=25,
+                        safety_settings=[
+                            types.SafetySetting(category='HARM_CATEGORY_HATE_SPEECH', threshold='BLOCK_NONE'),
+                            types.SafetySetting(category='HARM_CATEGORY_HARASSMENT', threshold='BLOCK_NONE'),
+                            types.SafetySetting(category='HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold='BLOCK_NONE'),
+                            types.SafetySetting(category='HARM_CATEGORY_DANGEROUS_CONTENT', threshold='BLOCK_NONE')
+                        ]
+                    )
+                )
+
+                if response.candidates and response.candidates[0].content.parts:
+                    bot_response = "".join(
+                        part.text for part in response.candidates[0].content.parts
+                        if part.text
+                    ).strip()
+
+                    if bot_response:
+                        logger.info(f"Успех! Документ обработан. Модель='{model_name}', ключ=...{api_key[-4:]}")
+                        await key_manager.set_successful_key(api_key)
+                        return bot_response
+            
+            except Exception as e:
+                logger.error(f"Ошибка document. Модель='{model_name}', ключ=...{api_key[-4:]}. Ошибка: {e}")
+                
+    return "Ошибка при обработке файла. Сервис временно недоступен."
 
 
 
@@ -10315,6 +10448,72 @@ async def prediction_2026(update: Update, context: ContextTypes.DEFAULT_TYPE):
     asyncio.create_task(background_prediction())
 
 
+
+from youtube_transcript_api import YouTubeTranscriptApi
+from youtube_transcript_api.formatters import TextFormatter
+import io
+# Вспомогательная функция для извлечения ID видео из ссылки
+def get_video_id(url):
+    # Простейшая регулярка для отлова ID из стандартных ссылок и youtu.be
+    # Ищет 11 символов после 'v=' или после слэша
+    regex = r"(?:v=|\/)([0-9A-Za-z_-]{11}).*"
+    match = re.search(regex, url)
+    return match.group(1) if match else None
+
+async def ytxt_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Проверяем, прислал ли пользователь ссылку
+    if not context.args:
+        await update.message.reply_text("Пожалуйста, укажите ссылку: /ytxt https://youtube.com/...")
+        return
+
+    video_url = context.args[0]
+    video_id = get_video_id(video_url)
+
+    if not video_id:
+        await update.message.reply_text("Не удалось извлечь ID видео. Проверьте ссылку.")
+        return
+
+    status_message = await update.message.reply_text("Скачиваю расшифровку...")
+
+    try:
+        # Инициализация API
+        ytt_api = YouTubeTranscriptApi()
+        
+        # Получаем транскрипцию. 
+        # languages=['ru', 'en'] означает: "дай русскую, если нет - дай английскую"
+        # Согласно документации, если видео не имеет этих языков, возникнет ошибка.
+        transcript = ytt_api.fetch(video_id, languages=['ru', 'en'])
+
+        # Форматируем в обычный текст (убираем таймкоды и JSON структуру)
+        # Используем TextFormatter из документации
+        formatter = TextFormatter()
+        text_formatted = formatter.format_transcript(transcript)
+
+        # Создаем файл в памяти (чтобы не сохранять мусор на диск)
+        file_buffer = io.BytesIO(text_formatted.encode('utf-8'))
+        file_buffer.name = f"transcript_{video_id}.txt"
+
+        # Отправляем файл пользователю
+        await update.message.reply_document(
+            document=file_buffer,
+            caption=f"Расшифровка для видео {video_id}"
+        )
+        
+        # Удаляем сообщение "Скачиваю..."
+        await status_message.delete()
+
+    except Exception as e:
+        # Обработка ошибок (например, если субтитры отключены или видео недоступно)
+        error_text = f"Ошибка при получении транскрипции:\n{str(e)}"
+        
+        # Часто встречающиеся ошибки в этой библиотеке
+        if "TranscriptsDisabled" in str(e):
+            error_text = "Субтитры для этого видео отключены."
+        elif "NoTranscriptFound" in str(e):
+            error_text = "Не найдено субтитров на русском или английском языке."
+            
+        await status_message.edit_text(error_text)
+
 # Обновляем основную функцию main
 def main():
     application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
@@ -10346,7 +10545,10 @@ def main():
     application.add_handler(CommandHandler("search", search))
     application.add_handler(CommandHandler("pro", pro))    
     application.add_handler(CommandHandler("image", image_command))
+    application.add_handler(CommandHandler("ytxt", ytxt_command))
 
+
+  
     application.add_handler(CommandHandler("tw", twitter))       
     application.add_handler(CommandHandler("yt", yt)) 
     application.add_handler(CommandHandler("ytm", ytm))   
@@ -10388,6 +10590,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
