@@ -10454,11 +10454,35 @@ from requests import Session
 from youtube_transcript_api import YouTubeTranscriptApi
 from youtube_transcript_api.formatters import TextFormatter
 import io
+import re
+import os
+
 # Вспомогательная функция для извлечения ID видео из ссылки
 def get_video_id(url):
     regex = r"(?:v=|\/)([0-9A-Za-z_-]{11}).*"
     match = re.search(regex, url)
     return match.group(1) if match else None
+
+# НОВАЯ ФУНКЦИЯ: парсит текстовый Netscape-формат куки в Python-словарь
+def parse_netscape_cookies(cookie_string):
+    cookies = {}
+    for line in cookie_string.splitlines():
+        # Убираем лишние пробелы по краям
+        line = line.strip()
+        # Игнорируем комментарии и пустые строки
+        if not line or line.startswith('#'):
+            continue
+        
+        # Разбиваем строку по знаку табуляции (именно так структурирован этот формат)
+        parts = line.split('\t')
+        
+        # Формат Netscape содержит 7 колонок, 6-я - это имя, 7-я - значение
+        if len(parts) >= 7:
+            name = parts[5]
+            value = parts[6]
+            cookies[name] = value
+            
+    return cookies
 
 async def ytxt_command(update, context):
     if not context.args:
@@ -10478,22 +10502,26 @@ async def ytxt_command(update, context):
         # 1. Создаем кастомную сессию requests
         http_client = Session()
         
-        # 2. Добавляем куки и User-Agent
-        # Куки лучше хранить в переменных окружения на Render.com (Environment Variables),
-        # чтобы не "светить" их в коде.
-        # Замените 'ВАШИ_КУКИ_ЗДЕСЬ' на вашу строку куки или берите из os.getenv
-        youtube_cookies = os.environ.get("YOUTUBE_COOKIES")
+        # 2. Получаем сырую строку куки из переменных окружения
+        youtube_cookies_raw = os.environ.get("YOUTUBE_COOKIES")
 
-        if not youtube_cookies:
+        if not youtube_cookies_raw:
             raise ValueError("Переменная окружения YOUTUBE_COOKIES не установлена")
         
+        # 3. Парсим сырую строку в словарь
+        cookies_dict = parse_netscape_cookies(youtube_cookies_raw)
+        
+        # 4. ДОБАВЛЯЕМ КУКИ В СЕССИЮ ПРАВИЛЬНО
+        # Requests сам сформирует валидный заголовок "Cookie: key=val; ..."
+        http_client.cookies.update(cookies_dict)
+
+        # 5. Добавляем User-Agent (заголовок Cookie сюда писать больше НЕ нужно!)
         http_client.headers.update({
-            "Cookie": youtube_cookies,
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7"
         })
 
-        # 3. Передаем нашу сессию с куками в API
+        # 6. Передаем нашу сессию с куками в API
         ytt_api = YouTubeTranscriptApi(http_client=http_client)
         
         # Получаем транскрипцию
@@ -10521,8 +10549,6 @@ async def ytxt_command(update, context):
             error_text = "Не найдено субтитров на русском или английском языке."
             
         await status_message.edit_text(error_text)
-
-
 
 
 
@@ -10604,6 +10630,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
