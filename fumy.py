@@ -10477,51 +10477,83 @@ INVIDIOUS_INSTANCES =[
 
 def fetch_from_worker(video_id, headers):
     if not CF_WORKER_URL:
-        return None
-        
+        return None, "Cloudflare Worker URL не задан"
+
     try:
         url = f"{CF_WORKER_URL}/?v={video_id}"
         response = requests.get(url, headers=headers, timeout=10)
-        if response.status_code == 200:
-            data = response.json()
-            # Проверяем, что вернулся список с субтитрами
-            if isinstance(data, list) and len(data) > 0:
-                return data
+
+        if response.status_code != 200:
+            return None, f"Worker вернул статус {response.status_code}: {response.text}"
+
+        data = response.json()
+
+        if not isinstance(data, list) or not data:
+            return None, f"Worker вернул пустой или некорректный ответ: {data}"
+
+        return data, None
+
     except requests.RequestException as e:
-        print(f"Cloudflare Worker недоступен: {e}")
-    return None
+        return None, f"Worker ошибка сети: {str(e)}"
 
 def fetch_from_piped(video_id, headers):
+    errors = []
+
     for instance in PIPED_INSTANCES:
         try:
             url = f"{instance}/streams/{video_id}"
             response = requests.get(url, headers=headers, timeout=10)
-            if response.status_code == 200:
-                data = response.json()
-                return data.get("subtitles",[])
-        except requests.RequestException:
-            continue # Пробуем следующий сервер
-    return None
+
+            if response.status_code != 200:
+                errors.append(f"{instance} → {response.status_code}")
+                continue
+
+            data = response.json()
+            subtitles = data.get("subtitles", [])
+
+            if not subtitles:
+                errors.append(f"{instance} → нет субтитров")
+                continue
+
+            return subtitles, None
+
+        except requests.RequestException as e:
+            errors.append(f"{instance} → {str(e)}")
+
+    return None, " | ".join(errors)
 
 def fetch_from_invidious(video_id, headers):
+    errors = []
+
     for instance in INVIDIOUS_INSTANCES:
         try:
             url = f"{instance}/api/v1/videos/{video_id}"
             response = requests.get(url, headers=headers, timeout=10)
-            if response.status_code == 200:
-                data = response.json()
-                captions = data.get("captions",[])
-                
-                formatted_subtitles =[]
-                for cap in captions:
-                    formatted_subtitles.append({
-                        "name": cap.get("label", ""),
-                        "url": instance + cap.get("url")
-                    })
-                return formatted_subtitles
-        except requests.RequestException:
-            continue # Пробуем следующий сервер
-    return None
+
+            if response.status_code != 200:
+                errors.append(f"{instance} → {response.status_code}")
+                continue
+
+            data = response.json()
+            captions = data.get("captions", [])
+
+            if not captions:
+                errors.append(f"{instance} → нет captions")
+                continue
+
+            formatted_subtitles = []
+            for cap in captions:
+                formatted_subtitles.append({
+                    "name": cap.get("label", ""),
+                    "url": instance + cap.get("url")
+                })
+
+            return formatted_subtitles, None
+
+        except requests.RequestException as e:
+            errors.append(f"{instance} → {str(e)}")
+
+    return None, " | ".join(errors)
 
 
 # Вспомогательная функция для извлечения ID видео
@@ -10563,19 +10595,31 @@ async def ytxt_command(update, context):
         
         subtitles = None
 
-        # 1. Пытаемся получить через наш Cloudflare Worker
-        subtitles = fetch_from_worker(video_id, headers)
-
-        # 2. Если Worker не справился, фоллбэк на Piped
-        if not subtitles:
-            subtitles = fetch_from_piped(video_id, headers)
+        errors_log = []
         
-        # 3. Если Piped лежат, фоллбэк на Invidious
+        # Worker
+        subtitles, error = fetch_from_worker(video_id, headers)
+        if error:
+            errors_log.append(f"Worker: {error}")
+        
+        # Piped
         if not subtitles:
-            subtitles = fetch_from_invidious(video_id, headers)
-            
+            subtitles, error = fetch_from_piped(video_id, headers)
+            if error:
+                errors_log.append(f"Piped: {error}")
+        
+        # Invidious
         if not subtitles:
-            await status_message.edit_text("Не удалось получить субтитры. Все способы (Worker/Piped/Invidious) недоступны или в видео нет субтитров.")
+            subtitles, error = fetch_from_invidious(video_id, headers)
+            if error:
+                errors_log.append(f"Invidious: {error}")
+        
+        if not subtitles:
+            full_error = "\n\n".join(errors_log)
+            await status_message.edit_text(
+                f"❌ Не удалось получить субтитры.\n\n"
+                f"Подробности:\n{full_error}"
+            )
             return
 
         # Ищем нужный язык
@@ -10697,6 +10741,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
