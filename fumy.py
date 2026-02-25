@@ -10449,15 +10449,81 @@ async def prediction_2026(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 
-
-from requests import Session
+import requests
 from youtube_transcript_api import YouTubeTranscriptApi
 from youtube_transcript_api.formatters import TextFormatter
 import io
 import re
 import os
 
-# Вспомогательная функция для извлечения ID видео из ссылки
+# === НАСТРОЙКИ ===
+# Вставьте сюда ссылку на ваш Cloudflare Worker без слеша на конце
+CF_WORKER_URL = "https://yt-transcript-proxy.tvoy-subdomain.workers.dev"
+
+# Список публичных инстансов Piped
+PIPED_INSTANCES =[
+    "https://pipedapi.kavin.rocks",
+    "https://pipedapi.adminforge.de",
+    "https://pipedapi.tokhmi.xyz",
+    "https://pipedapi.moomoo.me"
+]
+
+# Список публичных инстансов Invidious
+INVIDIOUS_INSTANCES =[
+    "https://yewtu.be",
+    "https://vid.puffyan.us",
+    "https://invidious.projectsegfau.lt"
+]
+
+def fetch_from_worker(video_id, headers):
+    if not CF_WORKER_URL:
+        return None
+        
+    try:
+        url = f"{CF_WORKER_URL}/?v={video_id}"
+        response = requests.get(url, headers=headers, timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            # Проверяем, что вернулся список с субтитрами
+            if isinstance(data, list) and len(data) > 0:
+                return data
+    except requests.RequestException as e:
+        print(f"Cloudflare Worker недоступен: {e}")
+    return None
+
+def fetch_from_piped(video_id, headers):
+    for instance in PIPED_INSTANCES:
+        try:
+            url = f"{instance}/streams/{video_id}"
+            response = requests.get(url, headers=headers, timeout=10)
+            if response.status_code == 200:
+                data = response.json()
+                return data.get("subtitles",[])
+        except requests.RequestException:
+            continue # Пробуем следующий сервер
+    return None
+
+def fetch_from_invidious(video_id, headers):
+    for instance in INVIDIOUS_INSTANCES:
+        try:
+            url = f"{instance}/api/v1/videos/{video_id}"
+            response = requests.get(url, headers=headers, timeout=10)
+            if response.status_code == 200:
+                data = response.json()
+                captions = data.get("captions",[])
+                
+                formatted_subtitles =[]
+                for cap in captions:
+                    formatted_subtitles.append({
+                        "name": cap.get("label", ""),
+                        "url": instance + cap.get("url")
+                    })
+                return formatted_subtitles
+        except requests.RequestException:
+            continue # Пробуем следующий сервер
+    return None
+
+
 # Вспомогательная функция для извлечения ID видео
 def get_video_id(url):
     regex = r"(?:v=|\/)([0-9A-Za-z_-]{11}).*"
@@ -10468,18 +10534,13 @@ def clean_vtt(vtt_text):
     """Очищает VTT формат от таймкодов и тегов, оставляя только голый текст"""
     lines =[]
     for line in vtt_text.splitlines():
-        # Убираем HTML-подобные теги (например <c>...</c>)
         line = re.sub(r'<[^>]+>', '', line).strip()
-        
-        # Пропускаем служебные строки и таймкоды
         if not line or '-->' in line or line.startswith('WEBVTT') or line.startswith('Kind:') or line.startswith('Language:') or line.startswith('Style:'):
             continue
-            
-        # Убираем дубликаты строк (часто бывают в автосгенерированных субтитрах)
         if not lines or lines[-1] != line:
             lines.append(line)
-            
     return ' '.join(lines)
+
 
 async def ytxt_command(update, context):
     if not context.args:
@@ -10496,54 +10557,52 @@ async def ytxt_command(update, context):
     status_message = await update.message.reply_text("Скачиваю расшифровку...")
 
     try:
-        # 1. Запрашиваем данные о видео через публичное бесплатное API Piped
-        # Оно скрывает IP Render.com от YouTube
-        piped_api_url = f"https://pipedapi.kavin.rocks/streams/{video_id}"
-        
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
         }
         
-        response = requests.get(piped_api_url, headers=headers, timeout=15)
-        response.raise_for_status()
-        
-        data = response.json()
-        subtitles = data.get("subtitles",[])
-        
+        subtitles = None
+
+        # 1. Пытаемся получить через наш Cloudflare Worker
+        subtitles = fetch_from_worker(video_id, headers)
+
+        # 2. Если Worker не справился, фоллбэк на Piped
         if not subtitles:
-            await status_message.edit_text("Для этого видео не найдено субтитров.")
+            subtitles = fetch_from_piped(video_id, headers)
+        
+        # 3. Если Piped лежат, фоллбэк на Invidious
+        if not subtitles:
+            subtitles = fetch_from_invidious(video_id, headers)
+            
+        if not subtitles:
+            await status_message.edit_text("Не удалось получить субтитры. Все способы (Worker/Piped/Invidious) недоступны или в видео нет субтитров.")
             return
 
-        # 2. Ищем русские субтитры
+        # Ищем нужный язык
         target_sub = None
         for sub in subtitles:
             name_lower = sub.get("name", "").lower()
-            if "russian" in name_lower or "рус" in name_lower:
+            if "russian" in name_lower or "рус" in name_lower or "ru" in name_lower:
                 target_sub = sub
                 break
         
-        # Если русского нет, берем английский
         if not target_sub:
             for sub in subtitles:
                 name_lower = sub.get("name", "").lower()
-                if "english" in name_lower or "анг" in name_lower:
+                if "english" in name_lower or "анг" in name_lower or "en" in name_lower:
                     target_sub = sub
                     break
                     
-        # Если нет ни того, ни другого, берем первые доступные
         if not target_sub:
             target_sub = subtitles[0]
 
-        # 3. Скачиваем сам файл субтитров (формат VTT)
-        sub_url = target_sub.get("url")
-        sub_response = requests.get(sub_url, headers=headers, timeout=15)
+        # Скачиваем файл VTT. URL будет либо от воркера, либо от инстанса.
+        sub_response = requests.get(target_sub["url"], headers=headers, timeout=15)
         sub_response.raise_for_status()
         
-        # 4. Очищаем текст от таймкодов
         vtt_content = sub_response.text
         clean_text = clean_vtt(vtt_content)
 
-        # 5. Отправляем пользователю
         file_buffer = io.BytesIO(clean_text.encode('utf-8'))
         file_buffer.name = f"transcript_{video_id}.txt"
 
@@ -10556,13 +10615,11 @@ async def ytxt_command(update, context):
 
     except requests.exceptions.RequestException as e:
         await status_message.edit_text(
-            f"Ошибка сети при обращении к API Piped.\n\n"
+            f"Ошибка сети при скачивании субтитров.\n\n"
             f"Детали ошибки:\n{e}"
         )
     except Exception as e:
         await status_message.edit_text(f"Произошла непредвиденная ошибка:\n{str(e)}")
-
-
 
 # Обновляем основную функцию main
 def main():
@@ -10640,6 +10697,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
