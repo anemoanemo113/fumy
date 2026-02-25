@@ -10575,6 +10575,11 @@ def clean_vtt(vtt_text):
 
 
 # Вспомогательная функция для извлечения ID видео (остается вашей)
+# ВАШ КЛЮЧ RAPIDAPI
+RAPIDAPI_KEY = "f9d283f2e7mshac9e57090265977p1534ecjsn52ff6cd40594"
+RAPIDAPI_HOST = "youtube-video-summarizer-gpt-ai.p.rapidapi.com"
+
+# Вспомогательная функция для извлечения ID видео
 def get_video_id(url):
     regex = r"(?:v=|\/)([0-9A-Za-z_-]{11}).*"
     match = re.search(regex, url)
@@ -10592,41 +10597,86 @@ async def ytxt_command(update, context):
         await update.message.reply_text("Не удалось извлечь ID видео. Проверьте ссылку.")
         return
 
-    status_message = await update.message.reply_text("Скачиваю расшифровку...")
+    status_message = await update.message.reply_text("⏳ Скачиваю расшифровку (текст видео)...")
 
     try:
-        # Пытаемся получить субтитры: сначала русские, если нет - английские
-        # Если нет ни тех, ни других, скачает дефолтные (какие есть)
-        transcript_list = YouTubeTranscriptApi.list_transcripts(video_id, cookies='ytcookies.txt')
-        
-        try:
-            transcript = transcript_list.find_transcript(['ru', 'en'])
-        except NoTranscriptFound:
-            # Если нет ru или en, берем первые попавшиеся
-            transcript = list(transcript_list)[0]
+        async with aiohttp.ClientSession() as session:
+            
+            # =========================================================
+            # ШАГ 1: Получаем транскрипцию (Используем V1 API)
+            # =========================================================
+            v1_url = "https://youtube-video-summarizer-gpt-ai.p.rapidapi.com/api/v1/get-transcript-v2"
+            v1_params = {"video_id": video_id, "platform": "youtube"}
+            v1_headers = {
+                "x-rapidapi-key": RAPIDAPI_KEY,
+                "x-rapidapi-host": RAPIDAPI_HOST
+            }
 
-        # Скачиваем сами субтитры
-        fetched_transcript = transcript.fetch()
+            async with session.get(v1_url, headers=v1_headers, params=v1_params) as resp_v1:
+                if resp_v1.status != 200:
+                    raise Exception(f"Ошибка получения транскрипции (Код: {resp_v1.status})")
+                
+                data_v1 = await resp_v1.json()
+                
+                # Извлекаем текст
+                transcript_text = data_v1.get("transcript", data_v1.get("text", json.dumps(data_v1, ensure_ascii=False, indent=2)))
 
-        # Форматируем в простой текст без таймкодов
-        formatter = TextFormatter()
-        clean_text = formatter.format_transcript(fetched_transcript)
+            # Создаем файл транскрипции в памяти
+            transcript_buffer = io.BytesIO(transcript_text.encode('utf-8'))
+            transcript_buffer.name = f"transcript_{video_id}.txt"
 
-        # Создаем файл в памяти
-        file_buffer = io.BytesIO(clean_text.encode('utf-8'))
-        file_buffer.name = f"transcript_{video_id}_{transcript.language_code}.txt"
+            # Отправляем файл с транскрипцией
+            await update.message.reply_document(
+                document=transcript_buffer,
+                caption=f"📄 Полная расшифровка для видео {video_id}"
+            )
 
-        await update.message.reply_document(
-            document=file_buffer,
-            caption=f"Расшифровка для видео {video_id} ({transcript.language})"
-        )
-        
-        await status_message.delete()
+            # =========================================================
+            # ШАГ 2: Запрашиваем пересказ на русском (Используем V2 API)
+            # =========================================================
+            await status_message.edit_text("🤖 Расшифровка отправлена! Генерирую файл с пересказом на русском языке, подождите...")
 
-    except TranscriptsDisabled:
-        await status_message.edit_text("❌ У этого видео отключены субтитры создателем.")
+            v2_url = "https://youtube-video-summarizer-gpt-ai.p.rapidapi.com/api/free-summary-generator"
+            v2_headers = {
+                "Content-Type": "application/json",
+                "x-rapidapi-key": RAPIDAPI_KEY,
+                "x-rapidapi-host": RAPIDAPI_HOST
+            }
+            v2_payload = {
+                "operation": "summary-from-youtube",
+                "url": video_url,
+                "language": "Russian",             # Указываем русский язык
+                "summaryDepth": "detailed",        # Глубина: 'concise', 'detailed', 'balanced'
+                "summaryStyle": "bullet-points"    # Стиль: 'paragraph-based', 'bullet-points'
+            }
+
+            async with session.post(v2_url, headers=v2_headers, json=v2_payload) as resp_v2:
+                if resp_v2.status != 200:
+                    raise Exception(f"Ошибка генерации пересказа (Код: {resp_v2.status})")
+                
+                data_v2 = await resp_v2.json()
+                # Извлекаем текст пересказа
+                summary_text = data_v2.get("data", "Не удалось извлечь пересказ из ответа API.")
+
+            # =========================================================
+            # ШАГ 3: Упаковываем пересказ в .txt файл и отправляем
+            # =========================================================
+            
+            # Создаем файл пересказа в памяти
+            summary_buffer = io.BytesIO(summary_text.encode('utf-8'))
+            summary_buffer.name = f"summary_{video_id}.txt"
+
+            # Отправляем файл с пересказом
+            await update.message.reply_document(
+                document=summary_buffer,
+                caption=f"📝 Краткий пересказ для видео {video_id}"
+            )
+            
+            # Удаляем статусное сообщение, так как работа завершена
+            await status_message.delete()
+
     except Exception as e:
-        await status_message.edit_text(f"❌ Не удалось получить субтитры.\n\nОшибка: {str(e)}")
+        await status_message.edit_text(f"❌ Произошла ошибка.\n\nДетали: {str(e)}")
 
 # Обновляем основную функцию main
 def main():
@@ -10704,6 +10754,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
