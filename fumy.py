@@ -10603,7 +10603,7 @@ async def ytxt_command(update, context):
         async with aiohttp.ClientSession() as session:
             
             # =========================================================
-            # ШАГ 1: Получаем транскрипцию (Используем V1 API)
+            # Получаем транскрипцию (V1 API)
             # =========================================================
             v1_url = "https://youtube-video-summarizer-gpt-ai.p.rapidapi.com/api/v1/get-transcript-v2"
             v1_params = {"video_id": video_id, "platform": "youtube"}
@@ -10612,71 +10612,35 @@ async def ytxt_command(update, context):
                 "x-rapidapi-host": RAPIDAPI_HOST
             }
 
-            async with session.get(v1_url, headers=v1_headers, params=v1_params) as resp_v1:
-                if resp_v1.status != 200:
-                    raise Exception(f"Ошибка получения транскрипции (Код: {resp_v1.status})")
+            async with session.get(v1_url, headers=v1_headers, params=v1_params) as resp:
+                if resp.status != 200:
+                    raise Exception(f"Ошибка получения транскрипции (Код: {resp.status})")
                 
-                data_v1 = await resp_v1.json()
+                data = await resp.json()
                 
-                # Извлекаем текст
-                transcript_text = data_v1.get("transcript", data_v1.get("text", json.dumps(data_v1, ensure_ascii=False, indent=2)))
+                # Извлекаем текст транскрипции
+                transcript_text = data.get(
+                    "transcript",
+                    data.get("text", json.dumps(data, ensure_ascii=False, indent=2))
+                )
 
             # Создаем файл транскрипции в памяти
             transcript_buffer = io.BytesIO(transcript_text.encode('utf-8'))
             transcript_buffer.name = f"transcript_{video_id}.txt"
 
-            # Отправляем файл с транскрипцией
+            # Отправляем файл
             await update.message.reply_document(
                 document=transcript_buffer,
                 caption=f"📄 Полная расшифровка для видео {video_id}"
             )
 
-            # =========================================================
-            # ШАГ 2: Запрашиваем пересказ на русском (Используем V2 API)
-            # =========================================================
-            await status_message.edit_text("🤖 Расшифровка отправлена! Генерирую файл с пересказом на русском языке, подождите...")
-
-            v2_url = "https://youtube-video-summarizer-gpt-ai.p.rapidapi.com/api/free-summary-generator"
-            v2_headers = {
-                "Content-Type": "application/json",
-                "x-rapidapi-key": RAPIDAPI_KEY,
-                "x-rapidapi-host": RAPIDAPI_HOST
-            }
-            v2_payload = {
-                "operation": "summary-from-youtube",
-                "url": video_url,
-                "language": "Russian",             # Указываем русский язык
-                "summaryDepth": "detailed",        # Глубина: 'concise', 'detailed', 'balanced'
-                "summaryStyle": "bullet-points"    # Стиль: 'paragraph-based', 'bullet-points'
-            }
-
-            async with session.post(v2_url, headers=v2_headers, json=v2_payload) as resp_v2:
-                if resp_v2.status != 200:
-                    raise Exception(f"Ошибка генерации пересказа (Код: {resp_v2.status})")
-                
-                data_v2 = await resp_v2.json()
-                # Извлекаем текст пересказа
-                summary_text = data_v2.get("data", "Не удалось извлечь пересказ из ответа API.")
-
-            # =========================================================
-            # ШАГ 3: Упаковываем пересказ в .txt файл и отправляем
-            # =========================================================
-            
-            # Создаем файл пересказа в памяти
-            summary_buffer = io.BytesIO(summary_text.encode('utf-8'))
-            summary_buffer.name = f"summary_{video_id}.txt"
-
-            # Отправляем файл с пересказом
-            await update.message.reply_document(
-                document=summary_buffer,
-                caption=f"📝 Краткий пересказ для видео {video_id}"
-            )
-            
-            # Удаляем статусное сообщение, так как работа завершена
+            # Удаляем статусное сообщение
             await status_message.delete()
 
     except Exception as e:
-        await status_message.edit_text(f"❌ Произошла ошибка.\n\nДетали: {str(e)}")
+        await status_message.edit_text(
+            f"❌ Произошла ошибка.\n\nДетали: {str(e)}"
+        )
 
 # Обновляем основную функцию main
 def main():
@@ -10754,6 +10718,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
