@@ -10555,8 +10555,10 @@ async def ytxt_command(update, context):
         await status_message.delete()
 
     except requests.exceptions.RequestException as e:
-        await status_message.edit_text("Ошибка сети при обращении к API Piped. Попробуйте позже.")
-        print(f"Network error: {e}")
+        await status_message.edit_text(
+            f"Ошибка сети при обращении к API Piped.\n\n"
+            f"Детали ошибки:\n{e}"
+        )
     except Exception as e:
         await status_message.edit_text(f"Произошла непредвиденная ошибка:\n{str(e)}")
 
@@ -10638,6 +10640,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
