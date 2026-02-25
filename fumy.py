@@ -10458,31 +10458,28 @@ import re
 import os
 
 # Вспомогательная функция для извлечения ID видео из ссылки
+# Вспомогательная функция для извлечения ID видео
 def get_video_id(url):
     regex = r"(?:v=|\/)([0-9A-Za-z_-]{11}).*"
     match = re.search(regex, url)
     return match.group(1) if match else None
 
-# НОВАЯ ФУНКЦИЯ: парсит текстовый Netscape-формат куки в Python-словарь
-def parse_netscape_cookies(cookie_string):
-    cookies = {}
-    for line in cookie_string.splitlines():
-        # Убираем лишние пробелы по краям
-        line = line.strip()
-        # Игнорируем комментарии и пустые строки
-        if not line or line.startswith('#'):
+def clean_vtt(vtt_text):
+    """Очищает VTT формат от таймкодов и тегов, оставляя только голый текст"""
+    lines =[]
+    for line in vtt_text.splitlines():
+        # Убираем HTML-подобные теги (например <c>...</c>)
+        line = re.sub(r'<[^>]+>', '', line).strip()
+        
+        # Пропускаем служебные строки и таймкоды
+        if not line or '-->' in line or line.startswith('WEBVTT') or line.startswith('Kind:') or line.startswith('Language:') or line.startswith('Style:'):
             continue
-        
-        # Разбиваем строку по знаку табуляции (именно так структурирован этот формат)
-        parts = line.split('\t')
-        
-        # Формат Netscape содержит 7 колонок, 6-я - это имя, 7-я - значение
-        if len(parts) >= 7:
-            name = parts[5]
-            value = parts[6]
-            cookies[name] = value
             
-    return cookies
+        # Убираем дубликаты строк (часто бывают в автосгенерированных субтитрах)
+        if not lines or lines[-1] != line:
+            lines.append(line)
+            
+    return ' '.join(lines)
 
 async def ytxt_command(update, context):
     if not context.args:
@@ -10499,58 +10496,69 @@ async def ytxt_command(update, context):
     status_message = await update.message.reply_text("Скачиваю расшифровку...")
 
     try:
-        # 1. Создаем кастомную сессию requests
-        http_client = Session()
+        # 1. Запрашиваем данные о видео через публичное бесплатное API Piped
+        # Оно скрывает IP Render.com от YouTube
+        piped_api_url = f"https://pipedapi.kavin.rocks/streams/{video_id}"
         
-        # 2. Получаем сырую строку куки из переменных окружения
-        youtube_cookies_raw = os.environ.get("YOUTUBE_COOKIES")
-
-        if not youtube_cookies_raw:
-            raise ValueError("Переменная окружения YOUTUBE_COOKIES не установлена")
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        }
         
-        # 3. Парсим сырую строку в словарь
-        cookies_dict = parse_netscape_cookies(youtube_cookies_raw)
+        response = requests.get(piped_api_url, headers=headers, timeout=15)
+        response.raise_for_status()
         
-        # 4. ДОБАВЛЯЕМ КУКИ В СЕССИЮ ПРАВИЛЬНО
-        # Requests сам сформирует валидный заголовок "Cookie: key=val; ..."
-        http_client.cookies.update(cookies_dict)
-
-        # 5. Добавляем User-Agent (заголовок Cookie сюда писать больше НЕ нужно!)
-        http_client.headers.update({
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7"
-        })
-
-        # 6. Передаем нашу сессию с куками в API
-        ytt_api = YouTubeTranscriptApi(http_client=http_client)
+        data = response.json()
+        subtitles = data.get("subtitles",[])
         
-        # Получаем транскрипцию
-        transcript = ytt_api.fetch(video_id, languages=['ru', 'en'])
+        if not subtitles:
+            await status_message.edit_text("Для этого видео не найдено субтитров.")
+            return
 
-        formatter = TextFormatter()
-        text_formatted = formatter.format_transcript(transcript)
+        # 2. Ищем русские субтитры
+        target_sub = None
+        for sub in subtitles:
+            name_lower = sub.get("name", "").lower()
+            if "russian" in name_lower or "рус" in name_lower:
+                target_sub = sub
+                break
+        
+        # Если русского нет, берем английский
+        if not target_sub:
+            for sub in subtitles:
+                name_lower = sub.get("name", "").lower()
+                if "english" in name_lower or "анг" in name_lower:
+                    target_sub = sub
+                    break
+                    
+        # Если нет ни того, ни другого, берем первые доступные
+        if not target_sub:
+            target_sub = subtitles[0]
 
-        file_buffer = io.BytesIO(text_formatted.encode('utf-8'))
+        # 3. Скачиваем сам файл субтитров (формат VTT)
+        sub_url = target_sub.get("url")
+        sub_response = requests.get(sub_url, headers=headers, timeout=15)
+        sub_response.raise_for_status()
+        
+        # 4. Очищаем текст от таймкодов
+        vtt_content = sub_response.text
+        clean_text = clean_vtt(vtt_content)
+
+        # 5. Отправляем пользователю
+        file_buffer = io.BytesIO(clean_text.encode('utf-8'))
         file_buffer.name = f"transcript_{video_id}.txt"
 
         await update.message.reply_document(
             document=file_buffer,
-            caption=f"Расшифровка для видео {video_id}"
+            caption=f"Расшифровка для видео {video_id} ({target_sub.get('name')})"
         )
         
         await status_message.delete()
 
+    except requests.exceptions.RequestException as e:
+        await status_message.edit_text("Ошибка сети при обращении к API Piped. Попробуйте позже.")
+        print(f"Network error: {e}")
     except Exception as e:
-        error_text = f"Ошибка при получении транскрипции:\n{str(e)}"
-        
-        if "TranscriptsDisabled" in str(e):
-            error_text = "Субтитры для этого видео отключены."
-        elif "NoTranscriptFound" in str(e):
-            error_text = "Не найдено субтитров на русском или английском языке."
-            
-        await status_message.edit_text(error_text)
-
-
+        await status_message.edit_text(f"Произошла непредвиденная ошибка:\n{str(e)}")
 
 
 
@@ -10630,6 +10638,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
