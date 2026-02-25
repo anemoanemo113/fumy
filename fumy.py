@@ -4570,15 +4570,16 @@ def format_chat_context(chat_history, current_request):
 
 
 
-async def generate_document_response(document_file_path: str, command_text: str, context="") -> str:
+async def generate_document_response(document_file_path: str, command_text: str) -> str:
     """
     Читает локальный .txt файл и генерирует ответ с помощью Gemini/Gemma.
+    Контекст диалога удален для чистого анализа документа.
     """
     if not os.path.exists(document_file_path):
         logger.error(f"Файл не найден: {document_file_path}")
         return "Файл не найден."
 
-    # Читаем содержимое (с ограничением на 2 млн символов, чтобы не превысить токены)
+    # Читаем содержимое (с ограничением на 2 млн символов)
     try:
         with open(document_file_path, 'r', encoding='utf-8') as f:
             file_content = f.read(2000000)
@@ -4592,9 +4593,8 @@ async def generate_document_response(document_file_path: str, command_text: str,
 
     keys_to_try = key_manager.get_keys_to_try()
     
+    # Формируем промпт только из текста файла и запроса пользователя
     final_prompt = f"Содержимое текстового файла:\n\n{file_content}\n\nЗапрос пользователя: {command_text}"
-    if context:
-        final_prompt += f"\n\nКонтекст диалога:\n{context}"
 
     for model_name in ALL_MODELS_PRIORITY:
         is_gemma = model_name in GEMMA_MODELS
@@ -10556,11 +10556,7 @@ def fetch_from_invidious(video_id, headers):
     return None, " | ".join(errors)
 
 
-# Вспомогательная функция для извлечения ID видео
-def get_video_id(url):
-    regex = r"(?:v=|\/)([0-9A-Za-z_-]{11}).*"
-    match = re.search(regex, url)
-    return match.group(1) if match else None
+
 
 def clean_vtt(vtt_text):
     """Очищает VTT формат от таймкодов и тегов, оставляя только голый текст"""
@@ -10585,6 +10581,12 @@ def get_video_id(url):
     match = re.search(regex, url)
     return match.group(1) if match else None
 
+def format_seconds_to_hhmmss(seconds):
+    hours = int(seconds // 3600)
+    minutes = int((seconds % 3600) // 60)
+    secs = int(seconds % 60)
+    return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+
 async def ytxt_command(update, context):
     if not context.args:
         await update.message.reply_text("Пожалуйста, укажите ссылку: /ytxt https://youtube.com/...")
@@ -10597,50 +10599,61 @@ async def ytxt_command(update, context):
         await update.message.reply_text("Не удалось извлечь ID видео. Проверьте ссылку.")
         return
 
-    status_message = await update.message.reply_text("⏳ Скачиваю расшифровку (текст видео)...")
+    status_message = await update.message.reply_text("Скачиваю расшифровку...")
 
     try:
-        async with aiohttp.ClientSession() as session:
+        # Пытаемся получить субтитры
+        transcript_list = YouTubeTranscriptApi.list_transcripts(video_id, cookies='ytcookies.txt')
+        
+        try:
+            transcript = transcript_list.find_transcript(['ru', 'en'])
+        except NoTranscriptFound:
+            transcript = list(transcript_list)[0]
+
+        # Скачиваем словарь субтитров
+        fetched_transcript = transcript.fetch()
+
+        # 1. Формируем "чистый" текст (для нейросетей)
+        formatter = TextFormatter()
+        clean_text = formatter.format_transcript(fetched_transcript)
+
+        # 2. Формируем текст с таймкодами (для человека)
+        timecoded_lines =[]
+        for entry in fetched_transcript:
+            start_str = format_seconds_to_hhmmss(entry['start'])
+            end_str = format_seconds_to_hhmmss(entry['start'] + entry['duration'])
+            # Убираем возможные переносы строк внутри одного куска субтитров
+            text_chunk = entry['text'].replace('\n', ' ').strip()
+            timecoded_lines.append(f"[{start_str} - {end_str}] {text_chunk}")
             
-            # =========================================================
-            # Получаем транскрипцию (V1 API)
-            # =========================================================
-            v1_url = "https://youtube-video-summarizer-gpt-ai.p.rapidapi.com/api/v1/get-transcript-v2"
-            v1_params = {"video_id": video_id, "platform": "youtube"}
-            v1_headers = {
-                "x-rapidapi-key": RAPIDAPI_KEY,
-                "x-rapidapi-host": RAPIDAPI_HOST
-            }
+        timecoded_text = "\n".join(timecoded_lines)
 
-            async with session.get(v1_url, headers=v1_headers, params=v1_params) as resp:
-                if resp.status != 200:
-                    raise Exception(f"Ошибка получения транскрипции (Код: {resp.status})")
-                
-                data = await resp.json()
-                
-                # Извлекаем текст транскрипции
-                transcript_text = data.get(
-                    "transcript",
-                    data.get("text", json.dumps(data, ensure_ascii=False, indent=2))
-                )
+        # Создаем файлы в памяти
+        text_buffer = io.BytesIO(clean_text.encode('utf-8'))
+        text_buffer.name = f"{video_id}_{transcript.language_code}_clean.txt"
 
-            # Создаем файл транскрипции в памяти
-            transcript_buffer = io.BytesIO(transcript_text.encode('utf-8'))
-            transcript_buffer.name = f"transcript_{video_id}.txt"
+        timecoded_buffer = io.BytesIO(timecoded_text.encode('utf-8'))
+        timecoded_buffer.name = f"{video_id}_{transcript.language_code}_timecoded.txt"
 
-            # Отправляем файл
-            await update.message.reply_document(
-                document=transcript_buffer,
-                caption=f"📄 Полная расшифровка для видео {video_id}"
-            )
-
-            # Удаляем статусное сообщение
-            await status_message.delete()
-
-    except Exception as e:
-        await status_message.edit_text(
-            f"❌ Произошла ошибка.\n\nДетали: {str(e)}"
+        # Отправляем файл с таймкодами
+        await update.message.reply_document(
+            document=timecoded_buffer,
+            caption=f"📝 Полная расшифровка с таймкодами\nЯзык: {transcript.language}"
         )
+        
+        # Отправляем "чистый" файл
+        await update.message.reply_document(
+            document=text_buffer,
+            caption=f"🤖 Чистый текст (удобно для пересылки нейросети)\nЯзык: {transcript.language}"
+        )
+        
+        # Удаляем сообщение "Скачиваю..."
+        await status_message.delete()
+
+    except TranscriptsDisabled:
+        await status_message.edit_text("❌ У этого видео отключены субтитры создателем.")
+    except Exception as e:
+        await status_message.edit_text(f"❌ Не удалось получить субтитры.\n\nОшибка: {str(e)}")
 
 # Обновляем основную функцию main
 def main():
@@ -10718,6 +10731,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
