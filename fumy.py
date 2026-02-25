@@ -10458,7 +10458,7 @@ import os
 
 # === НАСТРОЙКИ ===
 # Вставьте сюда ссылку на ваш Cloudflare Worker без слеша на конце
-CF_WORKER_URL = "https://yt-transcript-proxy.tvoy-subdomain.workers.dev"
+CF_WORKER_URL = "https://yt-transcript-proxy.marinionina.workers.dev/"
 
 # Список публичных инстансов Piped
 PIPED_INSTANCES =[
@@ -10741,6 +10741,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
