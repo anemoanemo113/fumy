@@ -10574,6 +10574,12 @@ def clean_vtt(vtt_text):
     return ' '.join(lines)
 
 
+# Вспомогательная функция для извлечения ID видео (остается вашей)
+def get_video_id(url):
+    regex = r"(?:v=|\/)([0-9A-Za-z_-]{11}).*"
+    match = re.search(regex, url)
+    return match.group(1) if match else None
+
 async def ytxt_command(update, context):
     if not context.args:
         await update.message.reply_text("Пожалуйста, укажите ссылку: /ytxt https://youtube.com/...")
@@ -10589,81 +10595,38 @@ async def ytxt_command(update, context):
     status_message = await update.message.reply_text("Скачиваю расшифровку...")
 
     try:
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-        }
+        # Пытаемся получить субтитры: сначала русские, если нет - английские
+        # Если нет ни тех, ни других, скачает дефолтные (какие есть)
+        transcript_list = YouTubeTranscriptApi.list_transcripts(video_id, cookies='ytcookies.txt')
         
-        subtitles = None
+        try:
+            transcript = transcript_list.find_transcript(['ru', 'en'])
+        except NoTranscriptFound:
+            # Если нет ru или en, берем первые попавшиеся
+            transcript = list(transcript_list)[0]
 
-        errors_log = []
-        
-        # Worker
-        subtitles, error = fetch_from_worker(video_id, headers)
-        if error:
-            errors_log.append(f"Worker: {error}")
-        
-        # Piped
-        if not subtitles:
-            subtitles, error = fetch_from_piped(video_id, headers)
-            if error:
-                errors_log.append(f"Piped: {error}")
-        
-        # Invidious
-        if not subtitles:
-            subtitles, error = fetch_from_invidious(video_id, headers)
-            if error:
-                errors_log.append(f"Invidious: {error}")
-        
-        if not subtitles:
-            full_error = "\n\n".join(errors_log)
-            await status_message.edit_text(
-                f"❌ Не удалось получить субтитры.\n\n"
-                f"Подробности:\n{full_error}"
-            )
-            return
+        # Скачиваем сами субтитры
+        fetched_transcript = transcript.fetch()
 
-        # Ищем нужный язык
-        target_sub = None
-        for sub in subtitles:
-            name_lower = sub.get("name", "").lower()
-            if "russian" in name_lower or "рус" in name_lower or "ru" in name_lower:
-                target_sub = sub
-                break
-        
-        if not target_sub:
-            for sub in subtitles:
-                name_lower = sub.get("name", "").lower()
-                if "english" in name_lower or "анг" in name_lower or "en" in name_lower:
-                    target_sub = sub
-                    break
-                    
-        if not target_sub:
-            target_sub = subtitles[0]
+        # Форматируем в простой текст без таймкодов
+        formatter = TextFormatter()
+        clean_text = formatter.format_transcript(fetched_transcript)
 
-        # Скачиваем файл VTT. URL будет либо от воркера, либо от инстанса.
-        sub_response = requests.get(target_sub["url"], headers=headers, timeout=15)
-        sub_response.raise_for_status()
-        
-        vtt_content = sub_response.text
-        clean_text = clean_vtt(vtt_content)
-
+        # Создаем файл в памяти
         file_buffer = io.BytesIO(clean_text.encode('utf-8'))
-        file_buffer.name = f"transcript_{video_id}.txt"
+        file_buffer.name = f"transcript_{video_id}_{transcript.language_code}.txt"
 
         await update.message.reply_document(
             document=file_buffer,
-            caption=f"Расшифровка для видео {video_id} ({target_sub.get('name')})"
+            caption=f"Расшифровка для видео {video_id} ({transcript.language})"
         )
         
         await status_message.delete()
 
-    except requests.exceptions.RequestException as e:
-        await status_message.edit_text(
-            f"Ошибка сети при скачивании субтитров.\n\n"
-            f"Детали ошибки:\n{e}"
-        )
+    except TranscriptsDisabled:
+        await status_message.edit_text("❌ У этого видео отключены субтитры создателем.")
     except Exception as e:
-        await status_message.edit_text(f"Произошла непредвиденная ошибка:\n{str(e)}")
+        await status_message.edit_text(f"❌ Не удалось получить субтитры.\n\nОшибка: {str(e)}")
 
 # Обновляем основную функцию main
 def main():
@@ -10741,6 +10704,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
