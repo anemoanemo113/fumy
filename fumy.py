@@ -10650,8 +10650,6 @@ async def ytxt_command(update, context):
         # Удаляем сообщение "Скачиваю..."
         await status_message.delete()
 
-    except TranscriptsDisabled:
-        await status_message.edit_text("❌ У этого видео отключены субтитры создателем.")
     except Exception as e:
         await status_message.edit_text(f"❌ Не удалось получить субтитры.\n\nОшибка: {str(e)}")
 
@@ -10731,6 +10729,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
