@@ -3841,7 +3841,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         response_text = await generate_document_response(
                             document_file_path=local_file_path,
                             command_text=prompt_text,
-                            context="\n".join(f"{msg['role']}: {msg['message']}" for msg in relevant_messages)
                         )
 
                         message = {
@@ -10715,6 +10714,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
