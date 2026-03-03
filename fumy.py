@@ -329,15 +329,65 @@ async def send_gojo(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 InputMediaPhoto(media=img) for img in valid_media[1:]
             ]
 
-            await status_msg.delete()
-            status_msg = None
+            msgs = None
+            
+            # Пытаемся отправить медиагруппу. 
+            # Медиагруппа в Telegram требует минимум 2 элемента, поэтому цикл работает пока len > 1
+            while len(media_group) > 1:
+                try:
+                    msgs = await context.bot.send_media_group(
+                        chat_id=chat_id,
+                        media=media_group,
+                        read_timeout=60,
+                        write_timeout=60
+                    )
+                    break  # Если успешно отправили, выходим из цикла
+                    
+                except BadRequest as e:
+                    error_text = str(e)
+                    # Если ошибка в обработке изображения
+                    if "image_process_failed" in error_text:
+                        # Ищем номер битой картинки в тексте ошибки (например, "message #4")
+                        match = re.search(r"message #(\d+)", error_text)
+                        if match:
+                            bad_idx = int(match.group(1))
+                            if 0 <= bad_idx < len(media_group):
+                                logging.warning(f"Удаляем битую картинку под индексом {bad_idx}")
+                                removed_item = media_group.pop(bad_idx)
+                                
+                                # Если удалили первую картинку, переносим подпись на новую первую
+                                if bad_idx == 0 and media_group:
+                                    media_group[0].caption = removed_item.caption
+                                    
+                                continue  # Пробуем отправить обновленную группу еще раз
+                    # Если это другая ошибка (не image_process_failed), пробрасываем её дальше
+                    raise e
 
-            msgs = await context.bot.send_media_group(
-                chat_id=chat_id,
-                media=media_group,
-                read_timeout=60,
-                write_timeout=60
-            )
+            # Если после удаления битых картинок осталась всего 1 штука, 
+            # send_media_group не сработает (нужно минимум 2). Отправляем как обычное фото.
+            if not msgs and len(media_group) == 1:
+                try:
+                    msg = await context.bot.send_photo(
+                        chat_id=chat_id,
+                        photo=media_group[0].media,
+                        caption=media_group[0].caption,
+                        read_timeout=60,
+                        write_timeout=60
+                    )
+                    msgs = [msg] # Делаем списком, чтобы нижний код не сломался
+                except BadRequest as e:
+                    if "image_process_failed" not in str(e):
+                        raise e
+
+            # Удаляем сообщение "Ищу лучшие арты..." только когда всё отправили
+            if status_msg:
+                await status_msg.delete()
+                status_msg = None
+
+            # Если все картинки оказались битыми и удалились
+            if not msgs:
+                await context.bot.send_message(chat_id, "К сожалению, все найденные картинки оказались битыми 😢")
+                return
 
             first_msg_id = msgs[0].message_id
             callback_data = f"delgojo_{first_msg_id}_{len(msgs)}"
@@ -10726,6 +10776,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
