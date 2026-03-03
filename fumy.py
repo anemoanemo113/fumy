@@ -337,9 +337,9 @@ async def send_gojo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             # Создаем медиагруппу, передавая байты в параметр media
             media_group = [
-                InputMediaPhoto(media=valid_media[0], caption=caption)
+                InputMediaPhoto(media=valid_media[0], caption=caption, has_spoiler=True)
             ] + [
-                InputMediaPhoto(media=img) for img in valid_media[1:]
+                InputMediaPhoto(media=img, has_spoiler=True) for img in valid_media[1:]
             ]
 
             msgs = None
@@ -375,9 +375,10 @@ async def send_gojo(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                     new_first = media_group[0]
                                     media_group[0] = InputMediaPhoto(
                                         media=new_first.media,
-                                        caption=removed_item.caption
+                                        caption=removed_item.caption,
+                                        has_spoiler=True
                                     )
-                                    
+                                                                        
                                 continue  # Пробуем отправить обновленную группу еще раз
                                 
                             else:
@@ -393,6 +394,7 @@ async def send_gojo(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         chat_id=chat_id,
                         photo=media_group[0].media,
                         caption=media_group[0].caption,
+                        has_spoiler=True,
                         read_timeout=60,
                         write_timeout=60
                     )
@@ -10695,10 +10697,6 @@ async def ytxt_command(update, context):
 
     try:
         async with aiohttp.ClientSession() as session:
-            
-            # =========================================================
-            # Получаем транскрипцию (V1 API)
-            # =========================================================
             v1_url = "https://youtube-video-summarizer-gpt-ai.p.rapidapi.com/api/v1/get-transcript-v2"
             v1_params = {"video_id": video_id, "platform": "youtube"}
             v1_headers = {
@@ -10712,30 +10710,72 @@ async def ytxt_command(update, context):
                 
                 data = await resp.json()
                 
-                # Извлекаем текст транскрипции
+                # =========================================================
+                # 1. Формируем ПЕРВЫЙ файл (Оригинальный / полный JSON)
+                # =========================================================
                 transcript_text = data.get(
                     "transcript",
                     data.get("text", json.dumps(data, ensure_ascii=False, indent=2))
                 )
+                
+                transcript_buffer = io.BytesIO(transcript_text.encode('utf-8'))
+                transcript_buffer.name = f"transcript_{video_id}_full.txt"
 
-            # Создаем файл транскрипции в памяти
-            transcript_buffer = io.BytesIO(transcript_text.encode('utf-8'))
-            transcript_buffer.name = f"transcript_{video_id}.txt"
+                # =========================================================
+                # 2. Формируем ВТОРОЙ файл (Чистый текст для нейросети)
+                # =========================================================
+                clean_text_lines = []
+                
+                # Безопасно идем по структуре JSON
+                transcripts = data.get("data", {}).get("transcripts", {})
+                
+                # Перебираем все языки (например, "ru_auto", "en" и т.д.)
+                for lang_code, lang_data in transcripts.items():
+                    # Берем массив с субтитрами (в вашем примере это ключ "custom")
+                    # На всякий случай проверяем и другие возможные ключи
+                    segments = lang_data.get("custom") or lang_data.get("default") or []
+                    
+                    for segment in segments:
+                        if "text" in segment:
+                            # Убираем переносы строк внутри самих сегментов
+                            text_part = segment["text"].replace("\n", " ").strip()
+                            clean_text_lines.append(text_part)
+                    
+                    # Если текст успешно извлечен из первого попавшегося языка, прерываем цикл
+                    if clean_text_lines:
+                        break
+                
+                # Склеиваем всё в одну строку через пробел
+                clean_text = " ".join(clean_text_lines)
+                
+                # Если вдруг текст не найден
+                if not clean_text:
+                    clean_text = "Не удалось извлечь чистый текст из структуры ответа."
 
-            # Отправляем файл
+                clean_buffer = io.BytesIO(clean_text.encode('utf-8'))
+                clean_buffer.name = f"transcript_{video_id}_clean.txt"
+
+            # =========================================================
+            # 3. Отправляем оба файла пользователю
+            # =========================================================
+            
+            # Файл 1 (исходник)
             await update.message.reply_document(
                 document=transcript_buffer,
-                caption=f"📄 Полная расшифровка для видео {video_id}"
+                caption=f"📄 Полная расшифровка со всеми данными ({video_id})"
+            )
+            
+            # Файл 2 (чистый текст)
+            await update.message.reply_document(
+                document=clean_buffer,
+                caption=f"🤖 Чистый текст, подготовленный для анализа нейросетью"
             )
 
             # Удаляем статусное сообщение
             await status_message.delete()
 
     except Exception as e:
-        await status_message.edit_text(
-            f"❌ Произошла ошибка.\n\nДетали: {str(e)}"
-        )
-
+        await status_message.edit_text(f"❌ Произошла ошибка.\n\nДетали: {str(e)}")
 
 # Обновляем основную функцию main
 def main():
@@ -10813,6 +10853,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
