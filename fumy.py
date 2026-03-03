@@ -294,10 +294,25 @@ async def send_gojo(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if len(candidates) >= 10:
                     break
 
-            tasks = [is_telegram_loadable(session, url) for url in candidates]
+            async def download_image(session, url):
+                try:
+                    async with session.get(url) as resp:
+                        if resp.status == 200:
+                            return await resp.read() # Возвращаем байты картинки
+                except Exception:
+                    pass
+                return None
+
+            # Скачиваем кандидатов параллельно
+            tasks = [download_image(session, url) for url in candidates]
             results = await asyncio.gather(*tasks)
 
-            valid_urls = [url for url, ok in zip(candidates, results) if ok][:5]
+            # Оставляем только те, что успешно скачались (не None), берем первые 5
+            valid_media = [img for img in results if img is not None][:5]
+
+            if not valid_media:
+                await status_msg.edit_text("Не удалось скачать изображения 😢")
+                return
 
             if not valid_urls:
                 await status_msg.edit_text("Не удалось найти доступные изображения 😢")
@@ -10714,6 +10729,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
