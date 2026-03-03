@@ -314,10 +314,6 @@ async def send_gojo(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await status_msg.edit_text("Не удалось скачать изображения 😢")
                 return
 
-            if not valid_urls:
-                await status_msg.edit_text("Не удалось найти доступные изображения 😢")
-                return
-
             # --- Подпись ---
             if user_tags_provided:
                 caption = random.choice(CAPTIONS_WITH_TAGS).format(
@@ -10730,6 +10726,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
