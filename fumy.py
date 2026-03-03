@@ -56,7 +56,7 @@ from telegram.ext import (Application, CallbackContext, CallbackQueryHandler,
                           MessageHandler, filters)
 from yt_dlp.utils import sanitize_filename
 import random
-
+from telegram.error import BadRequest
 
 # Telegram Bot Token и Google API Key
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
@@ -10776,6 +10776,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
