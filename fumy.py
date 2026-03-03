@@ -278,7 +278,14 @@ async def send_gojo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         timeout_settings = aiohttp.ClientTimeout(total=15)
-        async with aiohttp.ClientSession(timeout=timeout_settings) as session:
+        
+        # ДОБАВЛЯЕМ ЗАГОЛОВКИ БРАУЗЕРА
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+            "Referer": "https://gelbooru.com/"
+        }
+        
+        async with aiohttp.ClientSession(timeout=timeout_settings, headers=headers) as session:
             data = await fetch_json(session, BASE_API_URL, params)
             posts = data.get("post", [])
 
@@ -298,11 +305,17 @@ async def send_gojo(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 try:
                     async with session.get(url) as resp:
                         if resp.status == 200:
-                            return await resp.read() # Возвращаем байты картинки
-                except Exception:
-                    pass
+                            # ПРОВЕРЯЕМ, ЧТО НАМ ВЕРНУЛИ ИМЕННО КАРТИНКУ, А НЕ HTML СТРАНИЦУ ЗАГЛУШКИ
+                            content_type = resp.headers.get('Content-Type', '')
+                            if 'image' not in content_type:
+                                logging.warning(f"Вместо картинки сервер вернул {content_type} для URL: {url}")
+                                return None
+                            return await resp.read()
+                        else:
+                            logging.warning(f"Ошибка HTTP {resp.status} при скачивании {url}")
+                except Exception as e:
+                    logging.error(f"Ошибка сети при скачивании {url}: {e}")
                 return None
-
             # Скачиваем кандидатов параллельно
             tasks = [download_image(session, url) for url in candidates]
             results = await asyncio.gather(*tasks)
@@ -347,22 +360,31 @@ async def send_gojo(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     error_text = str(e)
                     # Если ошибка в обработке изображения
                     if "image_process_failed" in error_text:
-                        # Ищем номер битой картинки в тексте ошибки (например, "message #4")
+                        # Ищем номер битой картинки в тексте ошибки
                         match = re.search(r"message #(\d+)", error_text)
                         if match:
-                            bad_idx = int(match.group(1))
+                            # Не забываем вычесть 1 (Телеграм считает с 1, Питон с 0)
+                            bad_idx = int(match.group(1)) - 1
+                            
                             if 0 <= bad_idx < len(media_group):
                                 logging.warning(f"Удаляем битую картинку под индексом {bad_idx}")
                                 removed_item = media_group.pop(bad_idx)
                                 
                                 # Если удалили первую картинку, переносим подпись на новую первую
                                 if bad_idx == 0 and media_group:
-                                    media_group[0].caption = removed_item.caption
+                                    new_first = media_group[0]
+                                    media_group[0] = InputMediaPhoto(
+                                        media=new_first.media,
+                                        caption=removed_item.caption
+                                    )
                                     
                                 continue  # Пробуем отправить обновленную группу еще раз
-                    # Если это другая ошибка (не image_process_failed), пробрасываем её дальше
+                                
+                            else:
+                                logging.error(f"Некорректный индекс: {bad_idx} для длины {len(media_group)}")
+                                
+                    # Если это другая ошибка, пробрасываем её дальше
                     raise e
-
             # Если после удаления битых картинок осталась всего 1 штука, 
             # send_media_group не сработает (нужно минимум 2). Отправляем как обычное фото.
             if not msgs and len(media_group) == 1:
@@ -376,7 +398,13 @@ async def send_gojo(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     )
                     msgs = [msg] # Делаем списком, чтобы нижний код не сломался
                 except BadRequest as e:
-                    if "image_process_failed" not in str(e):
+                    error_text = str(e).lower() # Приводим текст ошибки к нижнему регистру
+                    if "image_process_failed" in error_text:
+                        # Если и последняя картинка битая, отмечаем, что ничего не отправилось
+                        logging.warning("Последняя оставшаяся картинка тоже оказалась битой.")
+                        msgs = None 
+                    else:
+                        # Если ошибка другая (например, нет прав писать в чат), пробрасываем её
                         raise e
 
             # Удаляем сообщение "Ищу лучшие арты..." только когда всё отправили
@@ -386,7 +414,18 @@ async def send_gojo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             # Если все картинки оказались битыми и удалились
             if not msgs:
-                await context.bot.send_message(chat_id, "К сожалению, все найденные картинки оказались битыми 😢")
+                if candidates:
+                    links_text = "\n".join(candidates[:10])
+                    await context.bot.send_message(
+                        chat_id,
+                        f"К сожалению, все найденные картинки оказались битыми 😢\n\n"
+                        f"Вот ссылки на найденные изображения:\n{links_text}"
+                    )
+                else:
+                    await context.bot.send_message(
+                        chat_id,
+                        "К сожалению, не удалось найти подходящие изображения 😢"
+                    )
                 return
 
             first_msg_id = msgs[0].message_id
@@ -413,8 +452,6 @@ async def send_gojo(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await status_msg.edit_text(f"Произошла ошибка: {e}")
             except:
                 pass
-
-
 async def delete_media_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
 
@@ -10776,6 +10813,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
