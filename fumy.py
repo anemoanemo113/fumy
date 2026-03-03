@@ -326,10 +326,11 @@ async def send_gojo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 caption = random.choice(CAPTIONS_DEFAULT)
 
+            # Создаем медиагруппу, передавая байты в параметр media
             media_group = [
-                InputMediaPhoto(media=valid_urls[0], caption=caption)
+                InputMediaPhoto(media=valid_media[0], caption=caption)
             ] + [
-                InputMediaPhoto(media=url) for url in valid_urls[1:]
+                InputMediaPhoto(media=img) for img in valid_media[1:]
             ]
 
             await status_msg.delete()
@@ -10729,6 +10730,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
