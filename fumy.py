@@ -1008,13 +1008,13 @@ async def vpn_instruction(update, context):
     # Первый файл
     await context.bot.send_document(
         chat_id=q.message.chat_id,
-        document="BQACAgIAAxkBAAECWKxptfXxA3LpCAql-2HBF0OtXrQSsQACOqIAAv2vsUn7Ss0YaK-ouToE"
+        document="BQACAgIAAx0CV_KJkQABD9R7abVqcVjHWjnloDfp2iD37ieHQJAAAjqiAAL9r7FJTMmGs2IR7WA6BA"
     )
 
     # Второй файл
     await context.bot.send_document(
         chat_id=q.message.chat_id,
-        document="BQACAgIAAxkBAAECWONptpwIult9KF8PwW1gZmDhWxqI-wACCJIAAi-wsEl1Je_M2jjcVjoE"
+        document="BQACAgIAAxkBAAKQJ2m2sKXAqG6c3VYw3cVnpPB90CQkAAIIkgACL7CwSUpKw6QO3X6pOgQ"
     )
 # ============================== #
 #   Вызов твоей функции с ключами
@@ -11121,6 +11121,8 @@ def main():
     application.add_handler(CommandHandler("chatid", chatid))
     application.add_handler(CommandHandler("fileid", fileid_command))
 
+    
+
       # Обработчики сообщений
     application.add_handler(CommandHandler('gojo', send_gojo))
     application.add_handler(CommandHandler("anime", send_anime))
@@ -11144,4 +11146,102 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
