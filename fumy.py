@@ -1074,7 +1074,7 @@ async def more_keys(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     user_index[user_id] = index
     await send_keys(query, context, index)
-    
+
 async def download_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Собираем ключи по правилам: для обычных ссылок — 40 верхних, 20 нижних и 30 случайных; для последней — 70 случайных"""
     query = update.callback_query
@@ -1150,6 +1150,13 @@ async def send_instruction(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         await update.callback_query.answer()
 
+
+async def oldvpn(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    user_index[user_id] = 0
+    await send_keys(update, context, 0)
+
+
 async def send_keys(update_or_query, context: ContextTypes.DEFAULT_TYPE, index: int):
     url = GITHUB_LINKS[index]
     repo_name = get_repo_name(url)
@@ -1204,7 +1211,6 @@ async def send_keys(update_or_query, context: ContextTypes.DEFAULT_TYPE, index: 
             parse_mode="HTML"
         )
         
-
 
 
 
