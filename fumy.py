@@ -11119,7 +11119,7 @@ def main():
     application.add_handler(CommandHandler("chat", chat))           
     application.add_handler(CommandHandler("fsend", fumy_send))
     application.add_handler(CommandHandler("chatid", chatid))
-
+    application.add_handler(CommandHandler("fileid", fileid_command))
 
       # Обработчики сообщений
     application.add_handler(CommandHandler('gojo', send_gojo))
