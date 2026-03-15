@@ -1074,6 +1074,40 @@ async def more_keys(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     user_index[user_id] = index
     await send_keys(query, context, index)
+async def download_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Собираем ключи по правилам: для обычных ссылок — 40 верхних, 20 нижних и 30 случайных; для последней — 70 случайных"""
+    query = update.callback_query
+    await query.answer()
+
+    all_keys = []
+    for url in GITHUB_LINKS:
+        keys = await fetch_keys(url)
+        if not keys:
+            continue
+
+        if url.endswith("V2RayRoot/V2RayConfig/refs/heads/main/Config/vless.txt"):
+            # Спец-логика для последней ссылки
+            selected = random.sample(keys, min(70, len(keys)))
+        else:
+            # Общая логика
+            selected = keys[:40] + keys[-20:]
+            remaining_keys = list(set(keys) - set(selected))
+            if len(remaining_keys) >= 30:
+                selected += random.sample(remaining_keys, 30)
+            else:
+                selected += remaining_keys
+        all_keys.extend(selected)
+
+    if not all_keys:
+        await query.message.reply_text("❌ Ключи не найдены.")
+        return
+
+    file_content = "\n".join(all_keys)
+    bio = io.BytesIO(file_content.encode("utf-8"))
+    bio.name = "vpn_keys.txt"
+
+    await query.message.reply_document(InputFile(bio))
+
 
 
 async def send_keys(update_or_query, context: ContextTypes.DEFAULT_TYPE, index: int):
