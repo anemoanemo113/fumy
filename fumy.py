@@ -11104,7 +11104,7 @@ def main():
     application.add_handler(CallbackQueryHandler(vpn_instruction, pattern="^vpn_instruction$"))
     application.add_handler(CallbackQueryHandler(close_handler, pattern="^close$"))
     application.add_handler(CallbackQueryHandler(send_subscription, pattern="vpn_generate_sub"))
-    application.add_handler(CommandHandler("oldvpn", vpn))
+    application.add_handler(CommandHandler("oldvpn", oldvpn))
     application.add_handler(CommandHandler("vpn", vpn_menu))
     application.add_handler(CommandHandler("vpnconfig", send_subscription))
 
@@ -11150,102 +11150,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
