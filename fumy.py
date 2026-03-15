@@ -1118,101 +1118,6 @@ async def send_keys(update_or_query, context: ContextTypes.DEFAULT_TYPE, index: 
         )
         
 
-async def send_instruction(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    instruction_text = """
-<b>Инструкция по использованию ключей:</b>\n\n
-1) Скачайте NekoBox или любую аналогичную программу поддерживающую vless и vmess ключей:
-• <a href="https://github.com/MatsuriDayo/NekoBoxForAndroid/releases">Версия для Android</a>
-• <a href="https://github.com/Matsuridayo/nekoray/releases">Версия для PC</a>\n\n
-2) Скопируйте 5/3 случайных ключей из сообщения бота или скачайте файлом сразу много ключей.\n\n
-3) Откройте NekoBox, нажмите кнопку добавления ключа в правом верхнем углу.
-Затем:
-• "Импорт из буфера обмена" (если скопировали ключи)
-• "Импорт из файла" (если скачали файл)\n\n
-4) После появления новых ключей в списке доступных нажмите три точки в правом верхнем углу и поочередно пройдите:
-• "TCP тест"
-• "URL тест"\n\n
-5) В том же меню нажмите "Удалить недоступные".\n\n
-Готово ✅ Все оставшиеся ключи (или хотя бы часть из них) должны работать.
-Если перестанут – повторите действия ещё раз, очистив перед этим NekoBox.\n\n
-<i>Инструкция написана для Android-версии, но на PC процесс похожий, только кнопки расположены иначе.</i>
-"""
-
-    # Кнопка "Закрыть окно"
-    keyboard = InlineKeyboardMarkup(
-        [[InlineKeyboardButton("❌ Закрыть окно", callback_data="ozondelete_msg")]]
-    )
-
-    if update.message:
-        await update.message.reply_text(
-            instruction_text,
-            parse_mode="HTML",
-            disable_web_page_preview=True,
-            reply_markup=keyboard
-        )
-    elif update.callback_query:
-        await update.callback_query.message.reply_text(
-            instruction_text,
-            parse_mode="HTML",
-            disable_web_page_preview=True,
-            reply_markup=keyboard
-        )
-        await update.callback_query.answer()
-
-async def vpn(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    user_index[user_id] = 0
-    await send_keys(update, context, 0)
-
-
-async def more_keys(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-
-    user_id = query.from_user.id
-
-    # Узнаём, по какой кнопке нажали
-    data = query.data  # например: "more_keys_1"
-    index = int(data.split("_")[-1])
-
-    user_index[user_id] = index
-    await send_keys(query, context, index)
-
-
-async def download_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Собираем ключи по правилам: для обычных ссылок — 40 верхних, 20 нижних и 30 случайных; для последней — 70 случайных"""
-    query = update.callback_query
-    await query.answer()
-
-    all_keys = []
-    for url in GITHUB_LINKS:
-        keys = await fetch_keys(url)
-        if not keys:
-            continue
-
-        if url.endswith("V2RayRoot/V2RayConfig/refs/heads/main/Config/vless.txt"):
-            # Спец-логика для последней ссылки
-            selected = random.sample(keys, min(70, len(keys)))
-        else:
-            # Общая логика
-            selected = keys[:40] + keys[-20:]
-            remaining_keys = list(set(keys) - set(selected))
-            if len(remaining_keys) >= 30:
-                selected += random.sample(remaining_keys, 30)
-            else:
-                selected += remaining_keys
-        all_keys.extend(selected)
-
-    if not all_keys:
-        await query.message.reply_text("❌ Ключи не найдены.")
-        return
-
-    file_content = "\n".join(all_keys)
-    bio = io.BytesIO(file_content.encode("utf-8"))
-    bio.name = "vpn_keys.txt"
-
-    await query.message.reply_document(InputFile(bio))
-
 
 
 
@@ -11093,8 +10998,7 @@ def main():
     application.add_handler(CommandHandler("astro", astrologic)) 
     application.add_handler(CommandHandler("chatday", chatday)) 
     application.add_handler(CommandHandler("sstat", handle_stat_command))
-    application.add_handler(CommandHandler("sstatall", handle_statall_command))    
-    application.add_handler(CommandHandler("vpn", vpn))  
+    application.add_handler(CommandHandler("sstatall", handle_statall_command))     
     application.add_handler(CommandHandler("predsk", prediction_2026))  
 
     application.add_handler(CommandHandler("search", search))
