@@ -1062,6 +1062,19 @@ async def fetch_keys(url: str):
     keys = re.findall(r"(?:vmess|vless)://[^\s]+", text)
     return keys
 
+async def more_keys(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    user_id = query.from_user.id
+
+    # Узнаём, по какой кнопке нажали
+    data = query.data  # например: "more_keys_1"
+    index = int(data.split("_")[-1])
+
+    user_index[user_id] = index
+    await send_keys(query, context, index)
+
 
 async def send_keys(update_or_query, context: ContextTypes.DEFAULT_TYPE, index: int):
     url = GITHUB_LINKS[index]
