@@ -755,6 +755,296 @@ async def send_character(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # Словарь для хранения индекса ссылки для каждого пользователя
+
+
+
+async def send_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Определяем "куда отвечать"
+    if update.callback_query:
+        await update.callback_query.answer()
+        target = update.callback_query.message
+    else:
+        target = update.message
+
+    await target.reply_text("🔍 Ищу файл подписки...")
+
+    # Если файла еще нет — запускаем обновление
+    if not SUB_FILE_PATH.exists():
+        await target.reply_text("⚠️ Файл еще не создан — запускаю обновление, подождите...")
+        count = await run_vpn_update()
+
+        if count == 0:
+            return await target.reply_text("❌ Не удалось собрать рабочие VPN-конфиги. Попробуйте позже.")
+        else:
+            await target.reply_text(f"✔️ Собрано {count} рабочих конфигов! Формирую ссылку...")
+
+    # Формируем ссылку на подписку
+    app_url = os.environ.get('RENDER_EXTERNAL_URL', 'http://localhost:80')
+    sub_url = f"{app_url}/static/sub.txt"
+
+    # Генерируем QR
+    qr_bio = create_qr_code(sub_url)
+
+    caption_text = (
+        f"🔐 <b>Ваша подписка обновлена!</b>\n\n"
+        f"🔗 <b>Ссылка для приложения:</b>\n<code>{sub_url}</code>\n\n"
+        f"ℹ️ <i>Вставьте эту ссылку в NekoBox, v2rayNG, Streisand, V2Box и др. как 'Subscription URL'.</i>\n"
+        f"📘 Подробная <a href=\"https://telegra.ph/Vpn-Instrukciya-11-26\">инструкция</a> по настройке."
+    )
+
+    # Кнопка "Закрыть"
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("❌ Закрыть", callback_data="close")]
+    ])
+
+    # Отправляем QR + текст + кнопку
+    await target.reply_photo(
+        photo=qr_bio,
+        caption=caption_text,
+        parse_mode=ParseMode.HTML,
+        reply_markup=keyboard
+    )
+
+
+
+
+VPN_BUTTONS = {
+    "black": {
+        "name": "Чёрные списки",
+        "img": "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/QR-codes/BLACK_VLESS_RUS-QR.png",
+        "txt": "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/BLACK_VLESS_RUS.txt"
+    },
+    "black_alt": {
+        "name": "Чёрные списки (альтернатива)",
+        "img": "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/QR-codes/BLACK_SS%2BAll_RUS-QR.png",
+        "txt": "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/BLACK_SS%2BAll_RUS.txt"
+    },
+    "black_mob": {
+        "name": "Чёрные списки (мобильные)",
+        "img": "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/QR-codes/BLACK_VLESS_RUS_mobile_QR.png",
+        "txt": "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/BLACK_VLESS_RUS_mobile.txt"
+    },
+    "white_cable": {
+        "name": "Белые списки (кабель)",
+        "img": "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/QR-codes/WHITE-CIDR-RU-all-QR.png",
+        "txt": "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/WHITE-CIDR-RU-all.txt"
+    },
+    "white_cable2": {
+        "name": "Белые списки (кабель, альтернативный)",
+        "img": "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/QR-codes/WHITE-CIDR-RU-all-QR.png",
+        "txt": "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/WHITE-CIDR-RU-all.txt"
+    },    
+    "white_mobile1": {
+        "name": "Белые списки (мобильный, вариант 1)",
+        "img": "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/QR-codes/Vless-Reality-White-Lists-Rus-Mobile-QR.png",
+        "txt": "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/Vless-Reality-White-Lists-Rus-Mobile.txt"
+    },
+    "white_mobile2": {
+        "name": "Белые списки (мобильный, вариант 2)",
+        "img": "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/QR-codes/Vless-Reality-White-Lists-Rus-Mobile-2-QR.png",
+        "txt": "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/Vless-Reality-White-Lists-Rus-Mobile-2.txt"
+    },    
+    "full_alt": {
+        "name": "Альтернативный общий(много ключей)",
+        "img": "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/QR-codes/Vless-Reality-White-Lists-Rus-Mobile-2-QR.png",
+        "txt": "https://raw.githubusercontent.com/kort0881/vpn-vless-configs-russia/main/githubmirror/clean/vless.txt"
+    }      
+}
+VPNINSTRUCTION_TEXT = """
+<b>Краткая инструкция по подключению VPN</b> 🛡
+
+<b>1) Скачайте и установите VPN-клиент</b>
+Мы настоятельно рекомендуем использовать <b>Hiddify</b>. Он максимально автоматизирован и практически всё делает за вас (но при желании вы можете выбрать любой другой клиент).
+
+<b>Скачать Hiddify:</b>
+📱 <a href="https://play.google.com/store/apps/details?id=app.hiddify.com">Android (Google Play)</a>
+💻 <a href="https://apps.microsoft.com/detail/9pdfnl3qv2s5">Windows (Microsoft Store)</a>
+🍏 <a href="https://apps.apple.com/us/app/hiddify-proxy-vpn/id6596777532">iOS (App Store)</a>
+
+<i>* Версии для Mac и Linux можно найти в сети самостоятельно. Ниже бот также пришлёт вам файлы установки (APK и EXE) для Android и Windows напрямую.</i>
+
+<b>2) Выберите подписку в боте</b>
+Выберите из списка нужный вам вариант среди «чёрных» и «белых» списков. В дальнейшем можно будет добавить несколько, но для начала выберите какой-то один.
+
+<b>3) Получите и скопируйте ссылку</b>
+Бот пришлёт вам картинку с QR-кодом и ссылку на <code>.txt</code> файл. <b>Скопируйте эту ссылку.</b>
+<i>Пример ссылки:</i>
+<code>https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/BLACK_SS%2BAll_RUS.txt</code>
+
+<b>4) Добавьте ключи в приложение</b>
+Откройте Hiddify. Нажмите большую кнопку подключения посередине или кнопку <b>«+»</b> в правом верхнем углу. Когда приложение попросит указать источник ключей, выберите вариант <b>«Добавить из буфера обмена»</b>.
+
+<b>5) Готово! Можно пользоваться</b> 🎉
+Список успешно импортирован! Теперь вы можете включать VPN одной кнопкой в главном меню. 
+
+⚡️ <b>Почему именно Hiddify:</b> он автоматически выбирает лучший сервер из списка, фильтрует нерабочие и сам переключает вас на «живые». Вам больше не нужно делать абсолютно ничего!
+<i>(Примечание: другие приложения обычно требуют ручной проверки и обновления ключей).</i>
+
+➕ <b>Как добавить другие списки:</b>
+При желании вы можете добавить несколько разных списков (например, и чёрный, и белый). Это делается через ту же кнопку <b>«+»</b> по аналогии с 4-м пунктом.
+
+🛠 <b>Решение проблем:</b>
+Если вдруг подписки не работают, соединение обрывается или происходят другие сбои — откройте <b>Настройки</b> в Hiddify и поэкспериментируйте с включением/выключением опций <b>«Трюки TLS»</b> и <b>«WARP»</b>.
+"""
+
+
+async def fileid_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Проверьте, что команда — в reply на сообщение
+    replied = update.message.reply_to_message
+    if not replied:
+        await update.message.reply_text("⛔️ Пожалуйста, используйте /fileid в ответ на сообщение с файлом.")
+        return
+
+    # Попробуем извлечь file_id из разных типов media
+    file_id = None
+    if replied.document:
+        file_id = replied.document.file_id
+    elif replied.photo:
+        # photo — список размеров, обычно берем последний (самое большое/качественное)
+        file_id = replied.photo[-1].file_id
+    elif replied.video:
+        file_id = replied.video.file_id
+    elif replied.audio:
+        file_id = replied.audio.file_id
+    elif replied.voice:
+        file_id = replied.voice.file_id
+    elif replied.video_note:
+        file_id = replied.video_note.file_id
+    else:
+        await update.message.reply_text("⚠️ Не найден файл в replied-сообщении. Это должно быть фото, документ, видео, аудио и т.п.")
+        return
+
+    await update.message.reply_text(f"✅ file_id: `{file_id}`")
+
+
+
+
+
+# ============================== #
+#   /vpn — главное меню
+# ============================== #
+
+
+
+async def vpn_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = [
+        [InlineKeyboardButton(b["name"], callback_data=f"vpn_{key}")]
+        for key, b in VPN_BUTTONS.items()
+    ]
+
+    # Новая кнопка — именно здесь (до старых ключей)
+    keyboard += [
+        [InlineKeyboardButton("Сгенерировать файл подписки", callback_data="vpn_generate_sub")],
+        [InlineKeyboardButton("Старые альтернативные ключи", callback_data="vpn_old")],
+        [InlineKeyboardButton("Инструкция", callback_data="vpn_instruction")],
+    ]
+    
+    message_html = (
+        "<b>VPN конфигурации</b>\n"
+        "Здесь вы можете получить списки бесплатных VPN ключей, просто выберите один или несколько из вариантов подходящих вам.\n\n"
+        "<b>В инструкции</b> — вся необходимая подробная информация о том как именно их использовать, а так же ссылки на файлы."
+    )
+
+    await update.message.reply_text(
+        message_html,
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode="HTML"
+    )
+
+
+
+
+# ============================== #
+#  Обработка кнопок VPN
+# ============================== #
+
+async def vpn_show_config(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    key = query.data.replace("vpn_", "")
+    
+    # Защита: проверяем, что ключ вообще есть в словаре
+    if key not in VPN_BUTTONS:
+        return
+        
+    cfg = VPN_BUTTONS[key]
+    keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("❌ Закрыть", callback_data="close")]])
+
+    try:
+        # Пытаемся отправить с фото
+        await query.message.reply_photo(
+            photo=cfg["img"],
+            caption=f"<b>{cfg['name']}</b>\n\n<code>{cfg['txt']}</code>",
+            parse_mode="HTML",
+            reply_markup=keyboard
+        )
+    except Exception as e:
+        # Если фото сломано (например удалено с GitHub), отправляем просто текстом
+        print(f"Ошибка отправки фото для {key}: {e}")
+        await query.message.reply_text(
+            text=f"<b>{cfg['name']}</b>\n\n⚠️ <i>Не удалось загрузить QR-код.</i>\n\nСсылка на подписку:\n<code>{cfg['txt']}</code>",
+            parse_mode="HTML",
+            reply_markup=keyboard
+        )
+
+# ============================== #
+#    Инструкция
+# ============================== #
+
+async def vpn_instruction(update, context):
+    q = update.callback_query
+    await q.answer()
+
+    # Отправляем текст инструкции
+    await q.message.reply_text(
+        VPNINSTRUCTION_TEXT,
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("❌ Закрыть", callback_data="close")]
+        ])
+    )
+
+    # Первый файл
+    await context.bot.send_document(
+        chat_id=q.message.chat_id,
+        document="BQACAgIAAxkBAAECWKxptfXxA3LpCAql-2HBF0OtXrQSsQACOqIAAv2vsUn7Ss0YaK-ouToE"
+    )
+
+    # Второй файл
+    await context.bot.send_document(
+        chat_id=q.message.chat_id,
+        document="BQACAgIAAxkBAAECWONptpwIult9KF8PwW1gZmDhWxqI-wACCJIAAi-wsEl1Je_M2jjcVjoE"
+    )
+# ============================== #
+#   Вызов твоей функции с ключами
+# ============================== #
+
+async def vpn_old(update, context):
+    q = update.callback_query
+    await q.answer()
+    await send_keys(update.callback_query, context, 0)   # index = 0 (меняешь сам)
+
+# ============================== #
+#   Кнопка закрыть
+# ============================== #
+
+async def close_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.callback_query.message.delete()
+
+
+
+
+# Список ваших raw.githubusercontent ссылок
+GITHUB_LINKS = [
+    "https://raw.githubusercontent.com/sakha1370/OpenRay/refs/heads/main/output/all_valid_proxies.txt",#9
+    "https://raw.githubusercontent.com/mehran1404/Sub_Link/refs/heads/main/V2RAY-Sub.txt",#6
+    "https://raw.githubusercontent.com/wuqb2i4f/xray-config-toolkit/main/output/base64/mix-uri",#7
+    "https://raw.githubusercontent.com/STR97/STRUGOV/refs/heads/main/STR.BYPASS#STR.BYPASS%F0%9F%91%BE",#10
+    "https://raw.githubusercontent.com/V2RayRoot/V2RayConfig/refs/heads/main/Config/vless.txt",#random
+]
+
+# Словарь для хранения индекса ссылки для каждого пользователя
 user_index = {}
 
 
@@ -4622,6 +4912,7 @@ async def fhelp(update: Update, context: CallbackContext):
 <code>/rand</code> — случайный пост из паблика Anemone
 <code>/anime</code> — случайное аниме
 <code>/animech</code> — случайный персонаж из аниме
+<code>/vpn</code> — бесплатные ВПН ключи и инструкция
 
 <b>Команды с текстом после них:</b>
 <code>/role</code> — выбрать или придумать роль для бота
@@ -4635,6 +4926,7 @@ async def fhelp(update: Update, context: CallbackContext):
 <code>/today</code> — узнать вероятность события
 <code>/todayall</code> — узнать вероятность для всех участников
 <code>/event</code> — прогноз успешности события
+<code>/ytxt</code> — скачать текстовую расшифровку ютуб видео
 
 <b>Пример:</b>
 <code>/sim Альберт Эйнштейн</code>  
@@ -10809,7 +11101,15 @@ def main():
     application.add_handler(CommandHandler("pro", pro))    
     application.add_handler(CommandHandler("image", image_command))
     application.add_handler(CommandHandler("ytxt", ytxt_command))
-
+    vpn_keys_regex = "|".join(VPN_BUTTONS.keys())
+    application.add_handler(CallbackQueryHandler(vpn_show_config, pattern=rf"^vpn_({vpn_keys_regex})$"))
+    application.add_handler(CallbackQueryHandler(vpn_old, pattern="^vpn_old$"))
+    application.add_handler(CallbackQueryHandler(vpn_instruction, pattern="^vpn_instruction$"))
+    application.add_handler(CallbackQueryHandler(close_handler, pattern="^close$"))
+    application.add_handler(CallbackQueryHandler(send_subscription, pattern="vpn_generate_sub"))
+    application.add_handler(CommandHandler("oldvpn", vpn))
+    application.add_handler(CommandHandler("vpn", vpn_menu))
+    application.add_handler(CommandHandler("vpnconfig", send_subscription))
 
   
     application.add_handler(CommandHandler("tw", twitter))       
