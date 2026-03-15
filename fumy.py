@@ -2574,16 +2574,8 @@ async def button_callback_handler(update: Update, context: ContextTypes.DEFAULT_
 
     action_data = query.data
 
-    # ✅ Проверяем специальные кнопки и перенаправляем в нужные функции
-    if action_data.startswith("more_keys_"):
-        return await more_keys(update, context)
-    elif action_data == "download_file":
-        return await download_file(update, context)
-    elif action_data == "vpninstruction_show":
-        return await send_instruction(update, context)
-    elif action_data.startswith("delgojo_"):
-        return await delete_media_callback(update, context)  # <-- добавлено
-
+    # УДАЛЕН БЛОК ПРОВЕРКИ КНОПОК (more_keys, download_file и т.д.), 
+    # так как теперь они перехватываются своими хэндлерами в main().
   
     try:
         action, result_id = action_data.split("|", 1)
@@ -11074,9 +11066,17 @@ def main():
     application.add_handler(CallbackQueryHandler(more_keys, pattern=r"^more_keys_\d+$"))  
     application.add_handler(CallbackQueryHandler(download_file, pattern="^download_file$"))
     application.add_handler(CallbackQueryHandler(send_instruction, pattern="^vpninstruction_show$"))
-    application.add_handler(CallbackQueryHandler(button_callback_handler))   
     application.add_handler(CallbackQueryHandler(delete_media_callback, pattern="^delgojo_"))
-  
+    
+    vpn_keys_regex = "|".join(VPN_BUTTONS.keys())
+    application.add_handler(CallbackQueryHandler(vpn_show_config, pattern=rf"^vpn_({vpn_keys_regex})$"))
+    application.add_handler(CallbackQueryHandler(vpn_old, pattern="^vpn_old$"))
+    application.add_handler(CallbackQueryHandler(vpn_instruction, pattern="^vpn_instruction$"))
+    application.add_handler(CallbackQueryHandler(close_handler, pattern="^close$"))
+    application.add_handler(CallbackQueryHandler(send_subscription, pattern="^vpn_generate_sub$"))
+
+
+    application.add_handler(CallbackQueryHandler(button_callback_handler, pattern=r".*\|.*"))  
     # Обработчики команд
     application.add_handler(CommandHandler("rand", rand))
     application.add_handler(CommandHandler('test', test))
@@ -11098,12 +11098,6 @@ def main():
     application.add_handler(CommandHandler("pro", pro))    
     application.add_handler(CommandHandler("image", image_command))
     application.add_handler(CommandHandler("ytxt", ytxt_command))
-    vpn_keys_regex = "|".join(VPN_BUTTONS.keys())
-    application.add_handler(CallbackQueryHandler(vpn_show_config, pattern=rf"^vpn_({vpn_keys_regex})$"))
-    application.add_handler(CallbackQueryHandler(vpn_old, pattern="^vpn_old$"))
-    application.add_handler(CallbackQueryHandler(vpn_instruction, pattern="^vpn_instruction$"))
-    application.add_handler(CallbackQueryHandler(close_handler, pattern="^close$"))
-    application.add_handler(CallbackQueryHandler(send_subscription, pattern="vpn_generate_sub"))
     application.add_handler(CommandHandler("oldvpn", oldvpn))
     application.add_handler(CommandHandler("vpn", vpn_menu))
     application.add_handler(CommandHandler("vpnconfig", send_subscription))
@@ -11150,3 +11144,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
